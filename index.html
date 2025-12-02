@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P H Carpentry Tools</title>
+    <!-- Tailwind CSS for modern styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- CORE SETUP & APP LOGIC -->
+    <script type="module">
+        // Global State: The hub is the only view. Future views would be added here.
+        window.currentView = 'hub';
+
+        // We no longer need the complex setView function since we are using <a> tags.
+        window.setView = function(viewName) {
+            // This function is kept minimal as a placeholder but is not strictly necessary for this file
+            // since navigation is handled by standard HTML links (<a>).
+            window.currentView = 'hub';
+        }
+
+        // Global Initialization
+        window.onload = function() {
+            // No action needed on load other than ensuring the hub is visible.
+        };
+    </script>
+
+    <!-- Custom CSS Styles -->
+    <style>
+        .app-btn {
+            @apply p-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 flex flex-col items-center justify-center space-y-3 cursor-pointer;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen p-4 sm:p-8 font-sans">
+    
+    <!-- Main Application Container -->
+    <div class="max-w-4xl mx-auto">
+        
+        <!-- Navigation Header (Always Visible) -->
+        <nav class="bg-white p-4 rounded-xl shadow-md flex justify-between items-center mb-6">
+            <a href="index.html" class="flex items-center space-x-2 cursor-pointer">
+                <svg class="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0h6m-6 0h.01"></path></svg>
+                <span class="text-xl font-bold text-gray-800">P H Carpentry Tools</span>
+            </a>
+        </nav>
+
+
+        <!-- -------------------- VIEW 1: HUB -------------------- -->
+        <div id="hubView">
+            <h1 class="text-3xl font-extrabold text-gray-800 text-center mb-8">
+                Applications
+            </h1>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 max-w-4xl mx-auto justify-center">
+
+                <!-- SQLite Viewer Button (Now linking to the external file) -->
+                <!-- The <a> tag makes it link to the separate sqlite_viewer.html file -->
+                <a href="sqlite_viewer.html" class="app-btn bg-green-50 border-2 border-green-300 text-green-700">
+                    <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 0v10c0 2.21-3.582 4-8 4s-8-1.79-8-4"></path></svg>
+                    <span class="text-xl font-semibold">Previous Job Search</span>
+                    <p class="text-sm text-gray-600 text-center">Search previous jobs.</p>
+                </a>
+
+                <a href="invoice_gen.html" class="app-btn bg-blue-50 border-2 border-blue-300 text-blue-700">
+                    <svg class="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 0v10c0 2.21-3.582 4-8 4s-8-1.79-8-4"></path></svg>
+                    <span class="text-xl font-semibold">Invoice Generator</span>
+                    <p class="text-sm text-gray-600 text-center">Generate invoice for this weeks work.</p>
+                </a>
+
+            </div>
+        </div>
+
+    </div>
+
+</body>
+</html>
