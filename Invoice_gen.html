@@ -89,11 +89,13 @@
         let isAuthReady = false; 
 
         /**
-         * Generates the secure Firestore collection reference path for the current user.
-         * Path: /artifacts/{appId}/users/{userId}/jobs
+         * Generates the secure Firestore collection reference path for shared/public data.
+         * Path: /artifacts/{appId}/public/data/jobs
          */
         function getJobsCollectionRef() {
-            const collectionPath = `artifacts/${appId}/users/${userId}/${DB_COLLECTION}`;
+            // ⭐ FIX: Using the public path for shared, collaborative data.
+            // This ensures all authenticated users (even with different UIDs) see the same data.
+            const collectionPath = `artifacts/${appId}/public/data/${DB_COLLECTION}`;
             return collection(db, collectionPath);
         }
 
@@ -120,7 +122,7 @@
                     app = initializeApp(FIREBASE_CONFIG);
                     db = getFirestore(app);
                     auth = getAuth(app);
-                    // ⭐ FIX: Set persistence to ensure the same anonymous user ID is reused on subsequent visits.
+                    // Set persistence to ensure the same anonymous user ID is reused on subsequent visits to the same device.
                     await setPersistence(auth, browserLocalPersistence); 
                 }
                 
@@ -139,7 +141,7 @@
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         userId = user.uid;
-                        // Display the user ID to confirm persistence is working across devices.
+                        // Display the user ID to confirm who is currently logged in.
                         statusDisplay.textContent = `Status: Authenticated (User ID: ${userId.substring(0, 8)}...)`; 
                         
                         if (!isAuthReady) {
@@ -169,7 +171,7 @@
                 return; 
             }
 
-            console.log("Setting up Firestore listener for user:", userId);
+            console.log("Setting up Firestore listener for the shared 'jobs' collection.");
 
             const jobsQuery = query(getJobsCollectionRef());
             const loadingIndicator = document.getElementById('loadingIndicator');
