@@ -49,41 +49,58 @@
         // SECTION 1: FIREBASE INITIALIZATION & GLOBAL STATE
         // ==========================================================
 
-        // Global variables provided by the Canvas environment
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        // Get the config string safely
-        const firebaseConfigString = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
+        // --- ⚠️ CONFIGURATION FIX FOR DEPLOYMENT (GITHUB PAGES) ⚠️ ---
+        //
+        // This function checks if the configuration is provided by the Canvas environment (__firebase_config).
+        // If not (e.g., when deployed to GitHub Pages), it uses the hardcoded values below.
+        //
+        // 🚨 ACTION REQUIRED: REPLACE ALL PLACEHOLDERS BELOW with your actual Firebase configuration object!
+        //
+        const FIREBASE_CONFIG = (function () {
+            // Priority 1: Check if the Canvas global variable exists (running inside Canvas)
+            if (typeof __firebase_config !== 'undefined') {
+                try {
+                    return JSON.parse(__firebase_config);
+                } catch (e) {
+                    console.error("Canvas Firebase config parse error:", e);
+                    return {};
+                }
+            }
+
+            // Priority 2: Use manual config if running outside Canvas (like on GitHub Pages)
+            return {
+                apiKey: "AIzaSyAX7GYX247S69b6blLBcja-_IHU6Y9i3hI",
+                authDomain: "tools-9bf35.firebaseapp.com",
+                projectId: "tools-9bf35",
+                storageBucket: "tools-9bf35.firebasestorage.app",
+                messagingSenderId: "803649385600",
+                appId: "1:803649385600:web:79fc8ed25d35ebdf032265",// <-- PASTE YOUR APP ID HERE
+                measurementId: "G-EW9J3PX5NE"            
+            };
+        })(); // <--- Do not remove this closing parenthesis and semicolon!
+
+        // The App ID for Firestore path generation
+        const appId = typeof __app_id !== 'undefined' ? __app_id : FIREBASE_CONFIG.projectId || 'default-app-id';
+        // The initial auth token is only available in the Canvas environment.
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         // Log configuration details for debugging connectivity issues
         console.log("App ID:", appId);
-        console.log("Initial Auth Token Status:", initialAuthToken ? "Present" : "Not Present");
+        console.log("Initial Auth Token Status:", initialAuthToken ? "Present (Canvas)" : "Not Present (Anonymous Sign-in will be used)");
+        console.log("Using Firebase Config:", FIREBASE_CONFIG);
 
         const DB_COLLECTION = 'jobs';
 
-        let app;        // Firebase App instance
-        let db;         // Firestore instance
-        let auth;       // Authentication instance
-        let userId = null; // Stores the current user's ID after successful authentication
-        let allJobs = [];  // Global array to store all job documents fetched from Firestore
-        let isAuthReady = false; // Flag to ensure Firestore queries only run after authentication completes
-
-        // --- DOM Elements ---
-        const statusDisplay = document.getElementById('authStatus');
-        const jobListContainer = document.getElementById('jobList');
-        const loadingIndicator = document.getElementById('loadingIndicator');
-        const modalElement = document.getElementById('aiModal');
-        const modalContentElement = document.getElementById('aiModalContent');
-        const modalTitleElement = document.getElementById('aiModalTitle');
-        const modalCloseButton = document.getElementById('closeModal');
-        const aiLoadingIndicator = document.getElementById('aiLoadingIndicator');
-
+        let app;
+        let db;
+        let auth;
+        let userId = null;
+        let allJobs = [];
+        let isAuthReady = false;
 
         /**
          * Generates the secure Firestore collection reference path for the current user.
-         * Data is stored privately under the user's ID.
          * Path: /artifacts/{appId}/users/{userId}/jobs
-         * @returns {object} Firestore CollectionReference object.
          */
         function getJobsCollectionRef() {
             const collectionPath = `artifacts/${appId}/users/${userId}/${DB_COLLECTION}`;
@@ -92,38 +109,29 @@
 
         /**
          * Initializes Firebase services (App, Firestore, Auth) and handles user authentication.
-         * This function prioritizes waiting for successful authentication before setting up the listener.
          */
         async function initFirebase() {
-            let firebaseConfig = {};
+            const statusDisplay = document.getElementById('authStatus');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+
             try {
-                // 1. Parse and validate the configuration
-                try {
-                    firebaseConfig = JSON.parse(firebaseConfigString);
-                } catch (e) {
-                    throw new Error("Failed to parse Firebase configuration JSON.");
+                // 1. Validate the configuration
+                if (!FIREBASE_CONFIG || !FIREBASE_CONFIG.projectId || FIREBASE_CONFIG.projectId === 'YOUR_PROJECT_ID_HERE') {
+                    throw new Error('Firebase configuration is missing the required "projectId" or is using the default placeholder. Please update the FIREBASE_CONFIG object in the code.');
                 }
 
-                console.log("Parsed Firebase Config:", firebaseConfig);
-
-                if (!firebaseConfig || !firebaseConfig.projectId) {
-                    // Throw the specific error that the user saw, but with more context
-                    throw new Error('Firebase configuration is missing the required "projectId". Cannot initialize Firebase.');
-                }
-
-                // 2. Initialize Firebase services if not already done
+                // 2. Initialize Firebase services
                 if (!app) {
-                    app = initializeApp(firebaseConfig);
+                    app = initializeApp(FIREBASE_CONFIG);
                     db = getFirestore(app);
                     auth = getAuth(app);
-                    // Set persistence to keep the user signed in across browser sessions
                     await setPersistence(auth, browserLocalPersistence);
                 }
 
                 statusDisplay.textContent = 'Authenticating...';
                 loadingIndicator.style.display = 'block';
 
-                // 3. Perform initial sign-in using the custom token or anonymously
+                // 3. Perform initial sign-in
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
@@ -133,17 +141,14 @@
                 // 4. Set up the final state listener after the initial sign-in attempt
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
-                        // User is successfully authenticated, set global state
                         userId = user.uid;
                         statusDisplay.textContent = `Status: Authenticated (User ID: ${userId})`;
 
-                        // Prevent the listener from setting up multiple times
                         if (!isAuthReady) {
                             isAuthReady = true;
-                            setupRealTimeListener(); // Start listening for job data
+                            setupRealTimeListener();
                         }
                     } else {
-                        // Should not happen after forced sign-in, but handle case where auth fails
                         statusDisplay.textContent = `Error: Authentication failed.`;
                         loadingIndicator.style.display = 'none';
                     }
@@ -159,32 +164,30 @@
 
         /**
          * Establishes a real-time connection to the Firestore database using onSnapshot.
-         * This listener automatically updates the global 'allJobs' array and triggers 'renderJobs'
-         * whenever data changes in the cloud. It runs ONLY after authentication is confirmed.
          */
         function setupRealTimeListener() {
             if (!userId) {
                 console.error("Listener setup failed: User ID is null.");
-                return; // Prevent listener setup until user ID is available
+                return;
             }
 
             console.log("Setting up Firestore listener for user:", userId);
 
-            // Create a query for the current user's private job collection
             const jobsQuery = query(getJobsCollectionRef());
+            const jobListContainer = document.getElementById('jobList');
+            const loadingIndicator = document.getElementById('loadingIndicator');
 
             onSnapshot(jobsQuery, (snapshot) => {
                 allJobs = [];
-                // Map the Firestore snapshot documents to the local allJobs array
                 snapshot.forEach((doc) => {
                     allJobs.push({ id: doc.id, ...doc.data() });
                 });
                 loadingIndicator.style.display = 'none';
-                renderJobs(); // Refresh the UI with the latest data
+                renderJobs();
             }, (error) => {
                 console.error("Error setting up real-time listener:", error);
                 loadingIndicator.style.display = 'none';
-                statusDisplay.textContent = `Error loading data: ${error.message}`;
+                document.getElementById('authStatus').textContent = `Error loading data: ${error.message}`;
             });
         }
 
@@ -194,16 +197,12 @@
 
         /**
          * Fetch wrapper with exponential backoff and jitter to handle network failures or rate limiting.
-         * @param {string} url - The API endpoint URL.
-         * @param {object} options - Fetch request configuration (method, headers, body).
-         * @param {number} maxRetries - Maximum number of retries.
          */
         async function fetchWithBackoff(url, options, maxRetries = 5) {
             for (let i = 0; i < maxRetries; i++) {
                 try {
                     const response = await fetch(url, options);
                     if (!response.ok) {
-                        // Check for errors that are safe to retry (429 Rate Limit, 5xx Server Errors)
                         if (response.status === 429 || response.status >= 500) {
                             throw new Error(`Retryable error: ${response.status}`);
                         }
@@ -211,11 +210,9 @@
                     }
                     return response;
                 } catch (error) {
-                    // Stop retrying if max attempts reached
                     if (i === maxRetries - 1) {
                         throw error;
                     }
-                    // Calculate exponential delay with jitter (randomness)
                     const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
@@ -223,11 +220,7 @@
         }
 
         /**
-         * Calls the Gemini API to generate content based on the provided parameters.
-         * @param {string} prompt - The user query sent to the model.
-         * @param {string} systemInstruction - Instructions defining the model's persona and task.
-         * @param {boolean} useSearch - Whether to enable Google Search grounding for real-time data.
-         * @returns {Promise<{text: string, sources: Array}>} The generated text and any source citations.
+         * Calls the Gemini API to generate content.
          */
         async function generateContent(prompt, systemInstruction, useSearch = false) {
             const model = 'gemini-2.5-flash-preview-09-2025';
@@ -237,7 +230,6 @@
             const payload = {
                 contents: [{ parts: [{ text: prompt }] }],
                 systemInstruction: { parts: [{ text: systemInstruction }] },
-                // Conditionally include the tools property if search grounding is requested
                 ...(useSearch && { tools: [{ "google_search": {} }] })
             };
 
@@ -258,7 +250,6 @@
 
                 const text = candidate.content.parts[0].text;
 
-                // Extract search grounding sources if they exist
                 let sources = [];
                 const groundingMetadata = candidate.groundingMetadata;
                 if (groundingMetadata && groundingMetadata.groundingAttributions) {
@@ -274,20 +265,22 @@
 
             } catch (error) {
                 console.error("Gemini API call failed:", error);
-                // Return a descriptive error message if the API call fails
                 return { text: `[AI Generation Failed: ${error.message}]`, sources: [] };
             }
         }
 
         /**
-         * Event handler to trigger the AI to generate a professional report based on a specific job's data.
-         * @param {string} jobId - The ID of the job document.
+         * Event handler to trigger the AI to generate a professional report.
          */
         window.generateReport = async function (jobId) {
             const job = allJobs.find(j => j.id === jobId);
             if (!job) return;
 
-            // Show modal and loading indicator while the AI request is pending
+            const modalElement = document.getElementById('aiModal');
+            const modalContentElement = document.getElementById('aiModalContent');
+            const modalTitleElement = document.getElementById('aiModalTitle');
+            const aiLoadingIndicator = document.getElementById('aiLoadingIndicator');
+
             modalTitleElement.textContent = `Generating Report for: ${job.title}`;
             modalContentElement.innerHTML = '';
             aiLoadingIndicator.style.display = 'block';
@@ -300,16 +293,12 @@
 
             const userQuery = `Job Title/Address: ${job.title}. Job Type: ${jobType}. Date Completed: ${formattedDate}. Work Performed/Description: ${job.description || 'No detailed work description provided.'}`;
 
-            // Call the AI model (no search grounding needed as we only use provided job data)
             const { text, sources } = await generateContent(userQuery, systemInstruction, false);
 
-            // Hide loading indicator
             aiLoadingIndicator.style.display = 'none';
 
-            // Construct HTML for the report result
             let reportHtml = `<p class="whitespace-pre-wrap">${text}</p>`;
 
-            // Add citation footer if sources were found (should be empty for this non-grounded call)
             if (sources.length > 0) {
                 reportHtml += `<div class="mt-6 pt-3 border-t border-gray-200">
                         <p class="font-semibold text-sm text-gray-600 mb-2">Sources Consulted:</p>
@@ -328,8 +317,6 @@
 
         /**
          * Formats a number as GBP currency string (£XX.XX).
-         * @param {number|string} value - The numerical value to format.
-         * @returns {string} Formatted currency string.
          */
         function formatCurrency(value) {
             const num = parseFloat(value);
@@ -339,8 +326,6 @@
 
         /**
          * Determines the job type (Hackney/Peabody/Other) and returns the HTML for display.
-         * @param {object} job - The job data object.
-         * @returns {string} HTML span element showing the job type.
          */
         function getJobTypeDisplay(job) {
             if (job.isHackney) return '<span class="text-blue-600 font-bold ml-2">Hackney</span>';
@@ -350,16 +335,12 @@
 
         /**
          * Calculates the date of the Monday (start) for the week containing the job's completion date.
-         * This is used to consistently group jobs into weekly sections.
-         * @param {string} dateString - The completion date in 'YYYY-MM-DD' format.
-         * @returns {string} The Monday's date in 'YYYY-MM-DD' format, or 'Unscheduled'.
          */
         function getWeekStartDate(dateString) {
             if (!dateString) return 'Unscheduled';
 
             const date = new Date(dateString + 'T00:00:00');
-            const day = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-            // Calculate the difference needed to reach Monday (1)
+            const day = date.getDay();
             const diff = date.getDate() - day + (day === 0 ? -6 : 1);
 
             const monday = new Date(date.setDate(diff));
@@ -368,16 +349,14 @@
         }
 
         /**
-         * Formats the week start date into a human-readable date range (e.g., Week of 01/01/2024 – 07/01/2024).
-         * @param {string} dateString - The Monday's date in 'YYYY-MM-DD' format or 'Unscheduled'.
-         * @returns {string} The formatted date range string.
+         * Formats the week start date into a human-readable date range.
          */
         function formatWeekRange(dateString) {
             if (dateString === 'Unscheduled') return 'Unscheduled Jobs';
 
             const start = new Date(dateString + 'T00:00:00');
             const end = new Date(start);
-            end.setDate(start.getDate() + 6); // Add 6 days to get Sunday
+            end.setDate(start.getDate() + 6);
 
             const formatter = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
@@ -385,9 +364,7 @@
         }
 
         /**
-         * Custom click handler for radio buttons. It allows a selected radio button to be unchecked
-         * by clicking it again, enabling a "no job type selected" state.
-         * Note: The 'wasCheckedBeforeClick' property is added to the DOM element in the edit/init functions.
+         * Custom click handler for radio buttons to allow deselection.
          */
         window.handleRadioClick = function (event) {
             const radio = event.target;
@@ -405,10 +382,9 @@
          * Hides the AI Report modal and clears its content.
          */
         window.closeModal = function () {
-            modalElement.classList.add('opacity-0', 'pointer-events-none');
-            // Clear content when closed
-            modalContentElement.innerHTML = '';
-            modalTitleElement.textContent = '';
+            document.getElementById('aiModal').classList.add('opacity-0', 'pointer-events-none');
+            document.getElementById('aiModalContent').innerHTML = '';
+            document.getElementById('aiModalTitle').textContent = '';
         }
 
         // ==========================================================
@@ -417,12 +393,8 @@
 
         /**
          * Generates the HTML string for a single read-only job card.
-         * This function separates the HTML structure from the main rendering loop for clarity.
-         * @param {Object} job - The job data object.
-         * @returns {string} The HTML string for the job card.
          */
         function createJobCardHtml(job) {
-            // Calculate total cost for display
             const totalCost = (parseFloat(job.labourPrice) || 0) + (parseFloat(job.materialPrice) || 0);
 
             return `
@@ -477,17 +449,16 @@
 
         /**
          * Main rendering function. Filters, groups, sorts, and displays all jobs.
-         * This function is called whenever the data updates (via onSnapshot) or when the search input changes.
          */
         window.renderJobs = function () {
-            jobListContainer.innerHTML = ''; // Clear previous content
+            const jobListContainer = document.getElementById('jobList');
+            jobListContainer.innerHTML = '';
 
             const searchTerm = document.getElementById('jobSearch').value.toLowerCase().trim();
 
             // 1. Apply Search Filter
             let filteredJobs = allJobs;
             if (searchTerm) {
-                // Filter jobs if the search term is found in any key field
                 filteredJobs = allJobs.filter(job => {
                     const searchableText = [
                         job.title,
@@ -503,7 +474,7 @@
             }
 
             if (filteredJobs.length === 0) {
-                jobListContainer.innerHTML = `<p class="text-center text-gray-500 py-10">${searchTerm ? 'No jobs match your search criteria.' : 'No jobs found.'}</p>`;
+                jobListContainer.innerHTML = `<p class="text-center text-gray-500 py-10">${searchTerm ? 'No jobs match your search criteria.' : 'No jobs found. Use the form above to add one!'}</p>`;
                 return;
             }
 
@@ -526,30 +497,24 @@
 
             // 4. Render each sorted group header and its job cards
             sortedGroupKeys.forEach(weekStartDate => {
-                // Sort jobs within their week by creation time (newest first)
                 const weekJobs = groupedJobs[weekStartDate].sort((a, b) => b.timestamp - a.timestamp);
 
                 const weekTitle = formatWeekRange(weekStartDate);
-                // Calculate the total cost for the current week group
                 const totalWeekCost = weekJobs.reduce((sum, job) =>
                     sum + (parseFloat(job.labourPrice) || 0) + (parseFloat(job.materialPrice) || 0), 0);
 
-                // Create the collapsible group header and container
                 const groupElement = document.createElement('div');
                 groupElement.className = 'week-group mb-6';
                 groupElement.innerHTML = `
-                        <!-- Collapsible Header Button with total cost -->
                         <button id="toggle-${weekStartDate}"
                                 class="flex justify-between items-center w-full p-4 bg-indigo-600 text-white rounded-t-xl shadow-md hover:bg-indigo-700 transition"
                                 onclick="toggleWeekDisplay('${weekStartDate}')" aria-expanded="true">
                             <span class="text-xl font-semibold">${weekTitle} (${weekJobs.length} Jobs)</span>
                             <span class="text-xl font-bold">${formatCurrency(totalWeekCost)}</span>
-                            <!-- Down/Up Arrow Icon that rotates when toggled -->
                             <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                         </button>
-                        <!-- Job Container where cards are placed -->
                         <div id="jobs-${weekStartDate}" class="jobs-container space-y-4 p-4 bg-white border border-t-0 border-gray-200 rounded-b-xl">
-                            <!-- Job Cards will be injected here -->
+                            <!-- Job Cards injected here -->
                         </div>
                     `;
                 jobListContainer.appendChild(groupElement);
@@ -557,11 +522,10 @@
                 const container = document.getElementById(`jobs-${weekStartDate}`);
 
                 weekJobs.forEach(job => {
-                    // Inject the read-only job card HTML
                     container.insertAdjacentHTML('beforeend', createJobCardHtml(job));
                 });
 
-                // Collapse non-Unscheduled groups by default unless a search term is active
+                // Collapse groups by default unless search is active or it's 'Unscheduled'
                 const shouldCollapse = (weekStartDate !== 'Unscheduled' && !searchTerm);
                 if (shouldCollapse) {
                     document.getElementById(`jobs-${weekStartDate}`).style.display = 'none';
@@ -574,8 +538,7 @@
         }
 
         /**
-         * Toggles the visibility of a weekly job group when the header button is clicked.
-         * @param {string} weekStartDate - The identifier for the group container.
+         * Toggles the visibility of a weekly job group.
          */
         window.toggleWeekDisplay = function (weekStartDate) {
             const container = document.getElementById(`jobs-${weekStartDate}`);
@@ -597,26 +560,22 @@
 
         /**
          * Handles the submission of the new job creation form.
-         * Gathers data, validates, and writes a new document to Firestore.
-         * @param {Event} event - The form submission event.
          */
         window.addJob = async function (event) {
             event.preventDefault();
 
             if (!isAuthReady || !userId) {
                 console.error("Authentication not ready. Cannot add job.");
-                statusDisplay.textContent = 'Error: Authentication not ready. Please wait.';
+                document.getElementById('authStatus').textContent = 'Error: Authentication not ready. Please wait.';
                 return;
             }
 
-            // 1. Get DOM elements and values from the creation form
             const addressInput = document.getElementById('jobAddress');
             const labourInput = document.getElementById('labourPrice');
             const materialInput = document.getElementById('materialPrice');
             const descInput = document.getElementById('jobDescription');
             const dateCompletedInput = document.getElementById('dateCompleted');
 
-            // Get job type selection (allowing for deselection)
             const jobTypeRadios = document.getElementsByName('jobType');
             let isHackney = false;
             let isPeabody = false;
@@ -628,12 +587,10 @@
                 }
             });
 
-            const address = addressInput.value.trim();
-            const title = address; // Use address as the main title/identifier
+            const title = addressInput.value.trim();
             const description = descInput.value.trim();
             const dateCompleted = dateCompletedInput.value.trim();
 
-            // Parse prices, defaulting to 0 if input is empty or invalid
             const labourPrice = parseFloat(labourInput.value) || 0;
             const materialPrice = parseFloat(materialInput.value) || 0;
 
@@ -643,47 +600,44 @@
                 return;
             }
 
-            // 2. Create new job object structure
             const jobData = {
                 title,
-                address,
+                address: title, // Use title as address for consistency
                 description,
                 labourPrice,
                 materialPrice,
                 isHackney,
                 isPeabody,
                 dateCompleted,
-                timestamp: Date.now() // Record creation time for sorting
+                timestamp: Date.now()
             };
 
-            // 3. Save job data to Firestore
             try {
-                // Get a new document reference with an auto-generated ID
                 const newDocRef = doc(getJobsCollectionRef());
                 await setDoc(newDocRef, jobData);
 
-                // Clear form fields for the next entry
+                // Clear form fields
                 addressInput.value = '';
                 labourInput.value = '';
                 materialInput.value = '';
                 descInput.value = '';
+                dateCompletedInput.value = '';
+
                 // Reset radio buttons state
                 jobTypeRadios.forEach(radio => {
                     radio.checked = false;
                     radio.wasCheckedBeforeClick = false;
                 });
 
-                // The UI refresh happens automatically via the onSnapshot listener
                 console.log("Job added successfully with ID:", newDocRef.id);
             } catch (e) {
                 console.error("Error adding document: ", e);
-                statusDisplay.textContent = `Error adding job: ${e.message}`;
+                document.getElementById('authStatus').textContent = `Error adding job: ${e.message}`;
             }
         }
 
         /**
          * Deletes a job document from Firestore.
-         * @param {string} id - The ID of the job document to delete.
          */
         window.deleteJob = async function (id) {
             if (!isAuthReady || !userId) return;
@@ -691,29 +645,23 @@
             try {
                 const docRef = doc(getJobsCollectionRef(), id);
                 await deleteDoc(docRef);
-                // UI refresh is automatic via onSnapshot
             } catch (e) {
                 console.error("Error deleting job: ", e);
-                statusDisplay.textContent = `Error deleting job: ${e.message}`;
+                document.getElementById('authStatus').textContent = `Error deleting job: ${e.message}`;
             }
         }
 
         /**
          * Switches the read-only job card element to display the editable form.
-         * Pre-fills the form fields with existing job data.
-         * @param {string} id - The ID of the job document to edit.
          */
         window.editJob = function (id) {
             const job = allJobs.find(j => j.id === id);
             if (!job) return;
 
             const cardElement = document.getElementById(`job-${id}`);
-
-            // Determine which job type radio button should be checked
             const checkedValue = job.isHackney ? 'hackney' : (job.isPeabody ? 'peabody' : null);
             const jobCompletedDate = job.dateCompleted || '';
 
-            // 1. Generate the HTML for the in-place editable form
             const editFormHtml = `
                     <form id="editForm-${id}" class="space-y-4" onsubmit="saveEdit(event, '${id}')">
                         <!-- Address Input (Required) -->
@@ -769,10 +717,9 @@
                     </form>
                 `;
 
-            // 2. Overwrite the card content with the edit form
             cardElement.innerHTML = editFormHtml;
 
-            // 3. Initialize custom radio button state for the newly created form
+            // Initialize custom radio button state for the newly created form
             const hackneyInput = document.getElementById(`editIsHackney-${id}`);
             const peabodyInput = document.getElementById(`editIsPeabody-${id}`);
 
@@ -782,26 +729,21 @@
 
         /**
          * Saves the changes made in the edit form back to Firestore.
-         * @param {Event} event - The form submission event.
-         * @param {string} id - The ID of the job document to update.
          */
         window.saveEdit = async function (event, id) {
             event.preventDefault();
 
             if (!isAuthReady || !userId) return;
 
-            // 1. Get updated values from the edit form
             const addressInput = document.getElementById(`editAddress-${id}`);
             const labourInput = document.getElementById(`editLabourPrice-${id}`);
             const materialInput = document.getElementById(`editMaterialPrice-${id}`);
             const descInput = document.getElementById(`editDescription-${id}`);
             const dateCompletedInput = document.getElementById(`editDateCompleted-${id}`);
 
-            // Check the selected radio button for job type
             const selectedJobType = document.querySelector(`input[name="editJobType-${id}"]:checked`)?.value || '';
 
-            const address = addressInput.value.trim();
-            const title = address;
+            const title = addressInput.value.trim();
             const description = descInput.value.trim();
             const dateCompleted = dateCompletedInput.value.trim();
 
@@ -816,27 +758,23 @@
                 return;
             }
 
-            // 2. Prepare updated data object
             const updatedData = {
                 title,
-                address,
+                address: title,
                 description,
                 labourPrice,
                 materialPrice,
                 isHackney,
                 isPeabody,
                 dateCompleted,
-                // Do not update 'timestamp', preserving original creation time
             };
 
-            // 3. Write update to Firestore (using merge: true to only update specified fields)
             try {
                 const docRef = doc(getJobsCollectionRef(), id);
                 await setDoc(docRef, updatedData, { merge: true });
-                // The UI will revert to read-only view and refresh automatically
             } catch (e) {
                 console.error("Error saving edit:", e);
-                statusDisplay.textContent = `Error saving job: ${e.message}`;
+                document.getElementById('authStatus').textContent = `Error saving job: ${e.message}`;
             }
         }
 
@@ -845,7 +783,7 @@
         // ==========================================================
 
         /**
-         * Initializes the application by setting up Firebase and DOM event listeners.
+         * Initializes the application.
          */
         window.onload = function () {
             initFirebase();
@@ -858,10 +796,9 @@
             if (peabodyCreate) peabodyCreate.wasCheckedBeforeClick = peabodyCreate.checked;
 
             // Setup listeners for the AI Modal close functionality
-            modalCloseButton.addEventListener('click', closeModal);
-            modalElement.addEventListener('click', (e) => {
-                // If user clicks the background overlay, close the modal
-                if (e.target === modalElement) {
+            document.getElementById('closeModal').addEventListener('click', closeModal);
+            document.getElementById('aiModal').addEventListener('click', (e) => {
+                if (e.target === document.getElementById('aiModal')) {
                     closeModal();
                 }
             });
@@ -950,7 +887,6 @@
 
         <!-- Search Input Field -->
         <div class="relative mb-6">
-            <!-- Input triggers renderJobs on every key stroke to filter the list -->
             <input type="text" id="jobSearch" oninput="renderJobs()" placeholder="Search by address, description, or price..." class="input-field pl-10 bg-white">
             <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
                 <!-- Search Icon -->
