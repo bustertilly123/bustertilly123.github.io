@@ -6,15 +6,15 @@
     <title>AI Job Manager (Firestore & Gemini)</title>
     <!-- Load Tailwind CSS from CDN for easy styling -->
     <script src="https://cdn.tailwindcss.com"></script>
-
+    
     <!-- Custom CSS for distinct styling elements (like the black borders) -->
     <style>
         /* Refined input field styling: applies Tailwind classes plus a distinct, strong border. */
-        .input-field {
-            @apply mt-1 block w-full p-3 rounded-lg shadow-xl focus:ring-indigo-500 focus:border-indigo-500;
+        .input-field { 
+            @apply mt-1 block w-full p-3 rounded-lg shadow-xl focus:ring-indigo-500 focus:border-indigo-500; 
             border: 3px solid #000000; /* Distinct Black Border */
         }
-
+        
         /* Ensure radio buttons also have a distinct, solid border for visual consistency */
         input[type="radio"] {
             border: 2px solid #000000;
@@ -31,15 +31,15 @@
             transition: opacity 0.2s ease-in-out;
         }
     </style>
-
+    
     <script type="module">
         // Import necessary Firebase modules
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import {
-            getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence
+        import { 
+            getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence 
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import {
-            getFirestore, doc, setDoc, onSnapshot, collection, query, deleteDoc, setLogLevel
+        import { 
+            getFirestore, doc, setDoc, onSnapshot, collection, query, deleteDoc, setLogLevel 
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Enable debug logging for Firebase to help with development and error tracking
@@ -48,17 +48,10 @@
         // ==========================================================
         // SECTION 1: FIREBASE INITIALIZATION & GLOBAL STATE
         // ==========================================================
-
-        // --- ⚠️ CONFIGURATION FIX FOR DEPLOYMENT (GITHUB PAGES) ⚠️ ---
+        
+        // --- CONFIGURATION: User's credentials are now inserted here. ---
         //
-        // This function checks if the configuration is provided by the Canvas environment (__firebase_config).
-        // If not (e.g., when deployed to GitHub Pages), it uses the hardcoded values below.
-        //
-        // 🚨 CRITICAL ACTION REQUIRED: REPLACE THE ENTIRE 'return' OBJECT BELOW
-        //    WITH YOUR ACTUAL FIREBASE CONFIGURATION OBJECT FROM YOUR PROJECT SETTINGS.
-        //
-        const FIREBASE_CONFIG = (function () {
-            // Priority 1: Check if the Canvas global variable exists (running inside Canvas)
+        const FIREBASE_CONFIG = (function() {
             if (typeof __firebase_config !== 'undefined') {
                 try {
                     return JSON.parse(__firebase_config);
@@ -66,40 +59,34 @@
                     console.error("Canvas Firebase config parse error:", e);
                     return {};
                 }
-            }
-
-            // Priority 2: Use manual config if running outside Canvas (like on GitHub Pages)
+            } 
+            
             return {
-                // 🛑 PASTE YOUR REAL FIREBASE CONFIG VALUES HERE 🛑
-                apiKey: "AIzaSyAX7GYX247S69b6blLBcja-_IHU6Y9i3hI",
-                authDomain: "tools-9bf35.firebaseapp.com",
-                projectId: "tools-9bf35",
-                storageBucket: "tools-9bf35.firebasestorage.app",
-                messagingSenderId: "803649385600",
-                appId: "1:803649385600:web:79fc8ed25d35ebdf032265",
-                // 🛑 END OF REAL FIREBASE CONFIG VALUES 🛑
+                apiKey: "AIzaSyAX7GYX247S69b6blLBcja-_IHU6Y9i3hI",           
+                authDomain: "tools-9bf35.firebaseapp.com",         
+                projectId: "tools-9bf35",      
+                storageBucket: "tools-9bf35.firebasestorage.app", 
+                messagingSenderId: "803649385600",  
+                appId: "1:803649385600:web:79fc8ed25d35ebdf032265"              
             };
-        })(); // <--- Do not remove this closing parenthesis and semicolon!
+        })(); 
 
         // The App ID for Firestore path generation
         const appId = typeof __app_id !== 'undefined' ? __app_id : FIREBASE_CONFIG.projectId || 'default-app-id';
         // The initial auth token is only available in the Canvas environment.
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-        // Log configuration details for debugging connectivity issues
+        
         console.log("App ID:", appId);
-        console.log("Initial Auth Token Status:", initialAuthToken ? "Present (Canvas)" : "Not Present (Anonymous Sign-in will be used)");
-        console.log("Using Firebase Config:", FIREBASE_CONFIG);
 
         const DB_COLLECTION = 'jobs';
-        const PLACEHOLDER_KEY = "YOUR_API_KEY_HERE"; // Used for checking if config was updated
+        const USER_API_KEY = "AIzaSyAX7GYX247S69b6blLBcja-_IHU6Y9i3hI"; // For quick internal validation
 
-        let app;
-        let db;
-        let auth;
-        let userId = null;
-        let allJobs = [];
-        let isAuthReady = false;
+        let app;        
+        let db;         
+        let auth;       
+        let userId = null; 
+        let allJobs = [];  
+        let isAuthReady = false; 
 
         /**
          * Generates the secure Firestore collection reference path for the current user.
@@ -116,30 +103,27 @@
         async function initFirebase() {
             const statusDisplay = document.getElementById('authStatus');
             const loadingIndicator = document.getElementById('loadingIndicator');
-
-            // CRITICAL CHECK: Ensure the configuration was updated if running outside of Canvas
-            if (FIREBASE_CONFIG.apiKey === PLACEHOLDER_KEY && typeof __firebase_config === 'undefined') {
-                loadingIndicator.style.display = 'none';
-                const errorMessage = 'CRITICAL ERROR: Firebase configuration not found. Please replace the placeholder values in the FIREBASE_CONFIG block of the code with your actual project keys.';
-                console.error(errorMessage);
-                statusDisplay.textContent = errorMessage;
-                return; // Stop initialization
+            
+            // Critical check to prevent running with dummy keys
+            if (FIREBASE_CONFIG.apiKey !== USER_API_KEY && typeof __firebase_config === 'undefined') {
+                 loadingIndicator.style.display = 'none';
+                 statusDisplay.textContent = 'CRITICAL ERROR: Firebase configuration missing.';
+                 return;
             }
 
             try {
-                // 1. Validate the configuration
                 if (!FIREBASE_CONFIG || !FIREBASE_CONFIG.projectId) {
                     throw new Error('Firebase configuration is missing the required "projectId".');
                 }
 
-                // 2. Initialize Firebase services
                 if (!app) {
                     app = initializeApp(FIREBASE_CONFIG);
                     db = getFirestore(app);
                     auth = getAuth(app);
-                    await setPersistence(auth, browserLocalPersistence);
+                    // ⭐ FIX: Set persistence to ensure the same anonymous user ID is reused on subsequent visits.
+                    await setPersistence(auth, browserLocalPersistence); 
                 }
-
+                
                 statusDisplay.textContent = 'Authenticating...';
                 loadingIndicator.style.display = 'block';
 
@@ -147,18 +131,20 @@
                 if (initialAuthToken) {
                     await signInWithCustomToken(auth, initialAuthToken);
                 } else {
-                    await signInAnonymously(auth);
+                    // This signs in an anonymous user and stores their ID locally via persistence.
+                    await signInAnonymously(auth); 
                 }
 
                 // 4. Set up the final state listener after the initial sign-in attempt
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         userId = user.uid;
-                        statusDisplay.textContent = `Status: Authenticated (User ID: ${userId})`;
-
+                        // Display the user ID to confirm persistence is working across devices.
+                        statusDisplay.textContent = `Status: Authenticated (User ID: ${userId.substring(0, 8)}...)`; 
+                        
                         if (!isAuthReady) {
-                            isAuthReady = true;
-                            setupRealTimeListener();
+                             isAuthReady = true;
+                             setupRealTimeListener(); 
                         }
                     } else {
                         statusDisplay.textContent = `Error: Authentication failed.`;
@@ -169,13 +155,8 @@
 
             } catch (error) {
                 console.error("Firebase Initialization or Auth Error:", error.message, error);
-                // Specifically target the configuration error for better clarity
-                if (error.code === 'auth/configuration-not-found') {
-                    statusDisplay.textContent = 'CRITICAL ERROR: Firebase config is incorrect or missing. Check console for details.';
-                } else {
-                    statusDisplay.textContent = `Error: Initialization failed (${error.message}). Check console.`;
-                }
                 loadingIndicator.style.display = 'none';
+                statusDisplay.textContent = `Error: Initialization failed (${error.code || error.message}).`;
             }
         }
 
@@ -185,7 +166,7 @@
         function setupRealTimeListener() {
             if (!userId) {
                 console.error("Listener setup failed: User ID is null.");
-                return;
+                return; 
             }
 
             console.log("Setting up Firestore listener for user:", userId);
@@ -199,14 +180,14 @@
                     allJobs.push({ id: doc.id, ...doc.data() });
                 });
                 loadingIndicator.style.display = 'none';
-                renderJobs();
+                renderJobs(); 
             }, (error) => {
                 console.error("Error setting up real-time listener:", error);
                 loadingIndicator.style.display = 'none';
                 document.getElementById('authStatus').textContent = `Error loading data: ${error.message}`;
             });
         }
-
+        
         // ==========================================================
         // SECTION 2: AI INTEGRATION (GEMINI API)
         // ==========================================================
@@ -227,9 +208,9 @@
                     return response;
                 } catch (error) {
                     if (i === maxRetries - 1) {
-                        throw error;
+                        throw error; 
                     }
-                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000; 
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
             }
@@ -240,13 +221,13 @@
          */
         async function generateContent(prompt, systemInstruction, useSearch = false) {
             const model = 'gemini-2.5-flash-preview-09-2025';
-            const apiKey = "";
+            const apiKey = ""; 
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
             const payload = {
                 contents: [{ parts: [{ text: prompt }] }],
                 systemInstruction: { parts: [{ text: systemInstruction }] },
-                ...(useSearch && { tools: [{ "google_search": {} }] })
+                ...(useSearch && { tools: [{ "google_search": {} }] }) 
             };
 
             const options = {
@@ -258,14 +239,14 @@
             try {
                 const response = await fetchWithBackoff(apiUrl, options);
                 const result = await response.json();
-
+                
                 const candidate = result.candidates?.[0];
                 if (!candidate || !candidate.content?.parts?.[0]?.text) {
                     throw new Error("Invalid response structure from Gemini API.");
                 }
 
                 const text = candidate.content.parts[0].text;
-
+                
                 let sources = [];
                 const groundingMetadata = candidate.groundingMetadata;
                 if (groundingMetadata && groundingMetadata.groundingAttributions) {
@@ -276,7 +257,7 @@
                         }))
                         .filter(source => source.uri && source.title);
                 }
-
+                
                 return { text, sources };
 
             } catch (error) {
@@ -284,11 +265,11 @@
                 return { text: `[AI Generation Failed: ${error.message}]`, sources: [] };
             }
         }
-
+        
         /**
          * Event handler to trigger the AI to generate a professional report.
          */
-        window.generateReport = async function (jobId) {
+        window.generateReport = async function(jobId) {
             const job = allJobs.find(j => j.id === jobId);
             if (!job) return;
 
@@ -296,32 +277,32 @@
             const modalContentElement = document.getElementById('aiModalContent');
             const modalTitleElement = document.getElementById('aiModalTitle');
             const aiLoadingIndicator = document.getElementById('aiLoadingIndicator');
-
+            
             modalTitleElement.textContent = `Generating Report for: ${job.title}`;
             modalContentElement.innerHTML = '';
             aiLoadingIndicator.style.display = 'block';
             modalElement.classList.remove('opacity-0', 'pointer-events-none');
-
+            
             const jobType = job.isHackney ? 'Hackney' : (job.isPeabody ? 'Peabody' : 'General');
             const formattedDate = job.dateCompleted || 'No date recorded';
-
+            
             const systemInstruction = "You are a professional administrative assistant for a maintenance company. Your task is to turn raw job data (address, description, completion date) into a clean, well-formatted, single-paragraph professional report or summary suitable for a client invoice or internal documentation. Do not include pricing information. Keep the tone formal and concise.";
-
+            
             const userQuery = `Job Title/Address: ${job.title}. Job Type: ${jobType}. Date Completed: ${formattedDate}. Work Performed/Description: ${job.description || 'No detailed work description provided.'}`;
-
-            const { text, sources } = await generateContent(userQuery, systemInstruction, false);
-
+            
+            const { text, sources } = await generateContent(userQuery, systemInstruction, false); 
+            
             aiLoadingIndicator.style.display = 'none';
 
             let reportHtml = `<p class="whitespace-pre-wrap">${text}</p>`;
-
+            
             if (sources.length > 0) {
                 reportHtml += `<div class="mt-6 pt-3 border-t border-gray-200">
-                        <p class="font-semibold text-sm text-gray-600 mb-2">Sources Consulted:</p>
-                        <ul class="list-disc list-inside space-y-1 text-xs text-gray-500">
-                            ${sources.map(source => `<li><a href="${source.uri}" target="_blank" class="text-indigo-500 hover:underline">${source.title}</a></li>`).join('')}
-                        </ul>
-                    </div>`;
+                    <p class="font-semibold text-sm text-gray-600 mb-2">Sources Consulted:</p>
+                    <ul class="list-disc list-inside space-y-1 text-xs text-gray-500">
+                        ${sources.map(source => `<li><a href="${source.uri}" target="_blank" class="text-indigo-500 hover:underline">${source.title}</a></li>`).join('')}
+                    </ul>
+                </div>`;
             }
 
             modalContentElement.innerHTML = reportHtml;
@@ -339,7 +320,7 @@
             if (isNaN(num)) return '£0.00';
             return '£' + num.toFixed(2);
         }
-
+        
         /**
          * Determines the job type (Hackney/Peabody/Other) and returns the HTML for display.
          */
@@ -355,12 +336,12 @@
         function getWeekStartDate(dateString) {
             if (!dateString) return 'Unscheduled';
 
-            const date = new Date(dateString + 'T00:00:00');
-            const day = date.getDay();
-            const diff = date.getDate() - day + (day === 0 ? -6 : 1);
-
+            const date = new Date(dateString + 'T00:00:00'); 
+            const day = date.getDay(); 
+            const diff = date.getDate() - day + (day === 0 ? -6 : 1); 
+            
             const monday = new Date(date.setDate(diff));
-
+            
             return monday.toISOString().split('T')[0];
         }
 
@@ -369,11 +350,11 @@
          */
         function formatWeekRange(dateString) {
             if (dateString === 'Unscheduled') return 'Unscheduled Jobs';
-
+            
             const start = new Date(dateString + 'T00:00:00');
             const end = new Date(start);
-            end.setDate(start.getDate() + 6);
-
+            end.setDate(start.getDate() + 6); 
+            
             const formatter = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
             return `Week of ${formatter.format(start)} – ${formatter.format(end)}`;
@@ -382,22 +363,22 @@
         /**
          * Custom click handler for radio buttons to allow deselection.
          */
-        window.handleRadioClick = function (event) {
+        window.handleRadioClick = function(event) {
             const radio = event.target;
-
+            
             const wasCheckedBeforeClick = radio.wasCheckedBeforeClick;
             radio.wasCheckedBeforeClick = radio.checked;
 
             if (wasCheckedBeforeClick) {
                 radio.checked = false;
-                radio.wasCheckedBeforeClick = false;
+                radio.wasCheckedBeforeClick = false; 
             }
         };
 
         /**
          * Hides the AI Report modal and clears its content.
          */
-        window.closeModal = function () {
+        window.closeModal = function() {
             document.getElementById('aiModal').classList.add('opacity-0', 'pointer-events-none');
             document.getElementById('aiModalContent').innerHTML = '';
             document.getElementById('aiModalTitle').textContent = '';
@@ -406,69 +387,69 @@
         // ==========================================================
         // SECTION 4: RENDERING & DISPLAY LOGIC
         // ==========================================================
-
+        
         /**
          * Generates the HTML string for a single read-only job card.
          */
         function createJobCardHtml(job) {
             const totalCost = (parseFloat(job.labourPrice) || 0) + (parseFloat(job.materialPrice) || 0);
-
+            
             return `
-                    <div id="job-${job.id}" class="job-card bg-gray-50 p-5 rounded-lg shadow-sm border border-gray-100">
-                        <!-- Read-Only Card Content Structure -->
-                        <div class="flex justify-between items-start mb-3">
-                            <h3 class="text-xl font-bold text-gray-900">${job.title}</h3>
-                            <span class="text-sm font-medium text-gray-600">Completed: ${job.dateCompleted || 'N/A'}</span>
-                        </div>
-
-                        <!-- Cost Breakdown -->
-                        <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm text-gray-700 border-b pb-2">
-                            <div><span class="font-semibold text-gray-600">Labour:</span> ${formatCurrency(job.labourPrice)}</div>
-                            <div><span class="font-semibold text-gray-600">Material:</span> ${formatCurrency(job.materialPrice)}</div>
-                            <div class="col-span-2 border-t pt-2 mt-1 font-bold text-base text-indigo-700">
-                                <span class="font-semibold text-gray-600">TOTAL COST:</span> ${formatCurrency(totalCost)}
-                            </div>
-                        </div>
-
-                        <!-- Job Type Display -->
-                        <div class="mb-4 text-sm font-medium pt-3">
-                            <span class="font-semibold text-gray-600">Job Type:</span>
-                            ${getJobTypeDisplay(job)}
-                        </div>
-
-                        <!-- Description -->
-                        <p class="text-gray-600 mb-4 pt-1">
-                            <span class="font-semibold text-gray-600 block mb-1">Description:</span>
-                            ${job.description || 'No detailed description provided.'}
-                        </p>
-
-                        <!-- Footer Actions (Edit, AI Report, Delete) -->
-                        <div class="flex justify-between items-center text-sm text-gray-500 border-t pt-3">
-                            <span>Created: ${new Date(job.timestamp).toLocaleDateString()}</span>
-                            <div class="flex items-center space-x-2">
-                                <button onclick="editJob('${job.id}')" class="text-indigo-600 hover:text-indigo-800 font-semibold transition">Edit</button>
-
-                                <!-- AI Button to generate report -->
-                                <button onclick="generateReport('${job.id}')" class="bg-indigo-500 text-white text-xs font-semibold px-3 py-1 rounded-full hover:bg-indigo-600 transition">
-                                    AI Report
-                                </button>
-
-                                <button onclick="deleteJob('${job.id}')" class="text-red-500 hover:text-red-700 transition ml-2">
-                                    <!-- Trash Can Icon SVG -->
-                                    <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                </button>
-                            </div>
+                <div id="job-${job.id}" class="job-card bg-gray-50 p-5 rounded-lg shadow-sm border border-gray-100">
+                    <!-- Read-Only Card Content Structure -->
+                    <div class="flex justify-between items-start mb-3">
+                        <h3 class="text-xl font-bold text-gray-900">${job.title}</h3>
+                        <span class="text-sm font-medium text-gray-600">Completed: ${job.dateCompleted || 'N/A'}</span>
+                    </div>
+                    
+                    <!-- Cost Breakdown -->
+                    <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm text-gray-700 border-b pb-2">
+                        <div><span class="font-semibold text-gray-600">Labour:</span> ${formatCurrency(job.labourPrice)}</div>
+                        <div><span class="font-semibold text-gray-600">Material:</span> ${formatCurrency(job.materialPrice)}</div>
+                        <div class="col-span-2 border-t pt-2 mt-1 font-bold text-base text-indigo-700">
+                            <span class="font-semibold text-gray-600">TOTAL COST:</span> ${formatCurrency(totalCost)}
                         </div>
                     </div>
-                `;
+
+                    <!-- Job Type Display -->
+                    <div class="mb-4 text-sm font-medium pt-3">
+                        <span class="font-semibold text-gray-600">Job Type:</span> 
+                        ${getJobTypeDisplay(job)}
+                    </div>
+
+                    <!-- Description -->
+                    <p class="text-gray-600 mb-4 pt-1">
+                        <span class="font-semibold text-gray-600 block mb-1">Description:</span>
+                        ${job.description || 'No detailed description provided.'}
+                    </p>
+                    
+                    <!-- Footer Actions (Edit, AI Report, Delete) -->
+                    <div class="flex justify-between items-center text-sm text-gray-500 border-t pt-3">
+                        <span>Created: ${new Date(job.timestamp).toLocaleDateString()}</span>
+                        <div class="flex items-center space-x-2">
+                            <button onclick="editJob('${job.id}')" class="text-indigo-600 hover:text-indigo-800 font-semibold transition">Edit</button>
+                            
+                            <!-- AI Button to generate report -->
+                            <button onclick="generateReport('${job.id}')" class="bg-indigo-500 text-white text-xs font-semibold px-3 py-1 rounded-full hover:bg-indigo-600 transition">
+                                AI Report
+                            </button>
+                            
+                            <button onclick="deleteJob('${job.id}')" class="text-red-500 hover:text-red-700 transition ml-2">
+                                <!-- Trash Can Icon SVG -->
+                                <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
         }
 
         /**
          * Main rendering function. Filters, groups, sorts, and displays all jobs.
          */
-        window.renderJobs = function () {
+        window.renderJobs = function() {
             const jobListContainer = document.getElementById('jobList');
-            jobListContainer.innerHTML = '';
+            jobListContainer.innerHTML = ''; 
 
             const searchTerm = document.getElementById('jobSearch').value.toLowerCase().trim();
 
@@ -477,9 +458,9 @@
             if (searchTerm) {
                 filteredJobs = allJobs.filter(job => {
                     const searchableText = [
-                        job.title,
-                        job.description,
-                        formatCurrency(job.labourPrice),
+                        job.title, 
+                        job.description, 
+                        formatCurrency(job.labourPrice), 
                         formatCurrency(job.materialPrice),
                         job.isHackney ? 'hackney' : '',
                         job.isPeabody ? 'peabody' : ''
@@ -513,26 +494,26 @@
 
             // 4. Render each sorted group header and its job cards
             sortedGroupKeys.forEach(weekStartDate => {
-                const weekJobs = groupedJobs[weekStartDate].sort((a, b) => b.timestamp - a.timestamp);
+                const weekJobs = groupedJobs[weekStartDate].sort((a, b) => b.timestamp - a.timestamp); 
 
                 const weekTitle = formatWeekRange(weekStartDate);
-                const totalWeekCost = weekJobs.reduce((sum, job) =>
+                const totalWeekCost = weekJobs.reduce((sum, job) => 
                     sum + (parseFloat(job.labourPrice) || 0) + (parseFloat(job.materialPrice) || 0), 0);
-
+                
                 const groupElement = document.createElement('div');
                 groupElement.className = 'week-group mb-6';
                 groupElement.innerHTML = `
-                        <button id="toggle-${weekStartDate}"
-                                class="flex justify-between items-center w-full p-4 bg-indigo-600 text-white rounded-t-xl shadow-md hover:bg-indigo-700 transition"
-                                onclick="toggleWeekDisplay('${weekStartDate}')" aria-expanded="true">
-                            <span class="text-xl font-semibold">${weekTitle} (${weekJobs.length} Jobs)</span>
-                            <span class="text-xl font-bold">${formatCurrency(totalWeekCost)}</span>
-                            <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                        </button>
-                        <div id="jobs-${weekStartDate}" class="jobs-container space-y-4 p-4 bg-white border border-t-0 border-gray-200 rounded-b-xl">
-                            <!-- Job Cards injected here -->
-                        </div>
-                    `;
+                    <button id="toggle-${weekStartDate}" 
+                            class="flex justify-between items-center w-full p-4 bg-indigo-600 text-white rounded-t-xl shadow-md hover:bg-indigo-700 transition" 
+                            onclick="toggleWeekDisplay('${weekStartDate}')" aria-expanded="true">
+                        <span class="text-xl font-semibold">${weekTitle} (${weekJobs.length} Jobs)</span>
+                        <span class="text-xl font-bold">${formatCurrency(totalWeekCost)}</span>
+                        <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                    </button>
+                    <div id="jobs-${weekStartDate}" class="jobs-container space-y-4 p-4 bg-white border border-t-0 border-gray-200 rounded-b-xl">
+                        <!-- Job Cards injected here -->
+                    </div>
+                `;
                 jobListContainer.appendChild(groupElement);
 
                 const container = document.getElementById(`jobs-${weekStartDate}`);
@@ -540,7 +521,7 @@
                 weekJobs.forEach(job => {
                     container.insertAdjacentHTML('beforeend', createJobCardHtml(job));
                 });
-
+                
                 // Collapse groups by default unless search is active or it's 'Unscheduled'
                 const shouldCollapse = (weekStartDate !== 'Unscheduled' && !searchTerm);
                 if (shouldCollapse) {
@@ -556,17 +537,17 @@
         /**
          * Toggles the visibility of a weekly job group.
          */
-        window.toggleWeekDisplay = function (weekStartDate) {
+        window.toggleWeekDisplay = function(weekStartDate) {
             const container = document.getElementById(`jobs-${weekStartDate}`);
             const arrow = document.getElementById(`arrow-${weekStartDate}`);
             const isVisible = container.style.display !== 'none';
-
+            
             if (isVisible) {
                 container.style.display = 'none';
-                arrow.classList.remove('rotate-180');
+                arrow.classList.remove('rotate-180'); 
             } else {
                 container.style.display = 'block';
-                arrow.classList.add('rotate-180');
+                arrow.classList.add('rotate-180'); 
             }
         }
 
@@ -577,7 +558,7 @@
         /**
          * Handles the submission of the new job creation form.
          */
-        window.addJob = async function (event) {
+        window.addJob = async function(event) {
             event.preventDefault();
 
             if (!isAuthReady || !userId) {
@@ -585,17 +566,17 @@
                 document.getElementById('authStatus').textContent = 'Error: Authentication not ready. Please wait.';
                 return;
             }
-
+            
             const addressInput = document.getElementById('jobAddress');
             const labourInput = document.getElementById('labourPrice');
             const materialInput = document.getElementById('materialPrice');
             const descInput = document.getElementById('jobDescription');
-            const dateCompletedInput = document.getElementById('dateCompleted');
+            const dateCompletedInput = document.getElementById('dateCompleted'); 
 
             const jobTypeRadios = document.getElementsByName('jobType');
             let isHackney = false;
             let isPeabody = false;
-
+            
             jobTypeRadios.forEach(radio => {
                 if (radio.checked) {
                     if (radio.value === 'hackney') isHackney = true;
@@ -606,7 +587,7 @@
             const title = addressInput.value.trim();
             const description = descInput.value.trim();
             const dateCompleted = dateCompletedInput.value.trim();
-
+            
             const labourPrice = parseFloat(labourInput.value) || 0;
             const materialPrice = parseFloat(materialInput.value) || 0;
 
@@ -617,32 +598,32 @@
             }
 
             const jobData = {
-                title,
+                title, 
                 address: title, // Use title as address for consistency
                 description,
                 labourPrice,
                 materialPrice,
                 isHackney,
                 isPeabody,
-                dateCompleted,
-                timestamp: Date.now()
+                dateCompleted, 
+                timestamp: Date.now() 
             };
 
             try {
-                const newDocRef = doc(getJobsCollectionRef());
+                const newDocRef = doc(getJobsCollectionRef()); 
                 await setDoc(newDocRef, jobData);
-
+                
                 // Clear form fields
                 addressInput.value = '';
                 labourInput.value = '';
                 materialInput.value = '';
                 descInput.value = '';
                 dateCompletedInput.value = '';
-
+                
                 // Reset radio buttons state
                 jobTypeRadios.forEach(radio => {
                     radio.checked = false;
-                    radio.wasCheckedBeforeClick = false;
+                    radio.wasCheckedBeforeClick = false; 
                 });
 
                 console.log("Job added successfully with ID:", newDocRef.id);
@@ -655,7 +636,7 @@
         /**
          * Deletes a job document from Firestore.
          */
-        window.deleteJob = async function (id) {
+        window.deleteJob = async function(id) {
             if (!isAuthReady || !userId) return;
 
             try {
@@ -666,11 +647,11 @@
                 document.getElementById('authStatus').textContent = `Error deleting job: ${e.message}`;
             }
         }
-
+        
         /**
          * Switches the read-only job card element to display the editable form.
          */
-        window.editJob = function (id) {
+        window.editJob = function(id) {
             const job = allJobs.find(j => j.id === id);
             if (!job) return;
 
@@ -679,66 +660,66 @@
             const jobCompletedDate = job.dateCompleted || '';
 
             const editFormHtml = `
-                    <form id="editForm-${id}" class="space-y-4" onsubmit="saveEdit(event, '${id}')">
-                        <!-- Address Input (Required) -->
+                <form id="editForm-${id}" class="space-y-4" onsubmit="saveEdit(event, '${id}')">
+                    <!-- Address Input (Required) -->
+                    <div>
+                        <label for="editAddress-${id}" class="block text-sm font-medium text-gray-700">Job Address</label>
+                        <input type="text" id="editAddress-${id}" required class="input-field" value="${job.address}">
+                    </div>
+                    
+                    <!-- Date Completed Input -->
+                    <div class="mb-4">
+                        <label for="editDateCompleted-${id}" class="block text-sm font-medium text-gray-700">Date Completed</label>
+                        <input type="date" id="editDateCompleted-${id}" class="input-field" value="${jobCompletedDate}">
+                    </div>
+
+                    <!-- Price Inputs (Labour & Material) -->
+                    <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label for="editAddress-${id}" class="block text-sm font-medium text-gray-700">Job Address</label>
-                            <input type="text" id="editAddress-${id}" required class="input-field" value="${job.address}">
+                            <label for="editLabourPrice-${id}" class="block text-sm font-medium text-gray-700">Labour Price (£)</label>
+                            <input type="number" id="editLabourPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.labourPrice || ''}">
                         </div>
-
-                        <!-- Date Completed Input -->
-                        <div class="mb-4">
-                            <label for="editDateCompleted-${id}" class="block text-sm font-medium text-gray-700">Date Completed</label>
-                            <input type="date" id="editDateCompleted-${id}" class="input-field" value="${jobCompletedDate}">
-                        </div>
-
-                        <!-- Price Inputs (Labour & Material) -->
-                        <div class="grid grid-cols-2 gap-4">
-                            <div>
-                                <label for="editLabourPrice-${id}" class="block text-sm font-medium text-gray-700">Labour Price (£)</label>
-                                <input type="number" id="editLabourPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.labourPrice || ''}">
-                            </div>
-                            <div>
-                                <label for="editMaterialPrice-${id}" class="block text-sm font-medium text-gray-700">Material Price (£)</label>
-                                <input type="number" id="editMaterialPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.materialPrice || ''}">
-                            </div>
-                        </div>
-
-                        <!-- Description Textarea -->
                         <div>
-                            <label for="editDescription-${id}" class="block text-sm font-medium text-gray-700">Detailed Description</label>
-                            <textarea id="editDescription-${id}" rows="3" class="input-field">${job.description || ''}</textarea>
+                            <label for="editMaterialPrice-${id}" class="block text-sm font-medium text-gray-700">Material Price (£)</label>
+                            <input type="number" id="editMaterialPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.materialPrice || ''}">
                         </div>
+                    </div>
 
-                        <!-- Job Type Radios -->
-                        <div class="space-y-2">
-                            <span class="block text-sm font-medium text-gray-700">Job Type:</span>
-                            <div class="flex space-x-6">
-                                <div class="flex items-center">
-                                    <input id="editIsHackney-${id}" type="radio" name="editJobType-${id}" value="hackney" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'hackney' ? 'checked' : ''} onclick="handleRadioClick(event)">
-                                    <label for="editIsHackney-${id}" class="ml-2 block text-sm font-medium text-gray-700">Hackney</label>
-                                </div>
-                                <div class="flex items-center">
-                                    <input id="editIsPeabody-${id}" type="radio" name="editJobType-${id}" value="peabody" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'peabody' ? 'checked' : ''} onclick="handleRadioClick(event)">
-                                    <label for="editIsPeabody-${id}" class="ml-2 block text-sm font-medium text-gray-700">Peabody</label>
-                                </div>
+                    <!-- Description Textarea -->
+                    <div>
+                        <label for="editDescription-${id}" class="block text-sm font-medium text-gray-700">Detailed Description</label>
+                        <textarea id="editDescription-${id}" rows="3" class="input-field">${job.description || ''}</textarea>
+                    </div>
+                    
+                    <!-- Job Type Radios -->
+                    <div class="space-y-2">
+                        <span class="block text-sm font-medium text-gray-700">Job Type:</span>
+                        <div class="flex space-x-6">
+                            <div class="flex items-center">
+                                <input id="editIsHackney-${id}" type="radio" name="editJobType-${id}" value="hackney" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'hackney' ? 'checked' : ''} onclick="handleRadioClick(event)">
+                                <label for="editIsHackney-${id}" class="ml-2 block text-sm font-medium text-gray-700">Hackney</label>
+                            </div>
+                            <div class="flex items-center">
+                                <input id="editIsPeabody-${id}" type="radio" name="editJobType-${id}" value="peabody" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'peabody' ? 'checked' : ''} onclick="handleRadioClick(event)">
+                                <label for="editIsPeabody-${id}" class="ml-2 block text-sm font-medium text-gray-700">Peabody</label>
                             </div>
                         </div>
-
-                        <!-- Action Buttons (Save and Cancel) -->
-                        <div class="flex space-x-3 pt-2">
-                            <button type="submit" class="flex-1 bg-green-600 text-white font-bold py-2 rounded-lg shadow-md hover:bg-green-700 transition">Save Changes</button>
-                            <button type="button" onclick="renderJobs()" class="flex-1 bg-gray-300 text-gray-800 font-bold py-2 rounded-lg shadow-md hover:bg-gray-400 transition">Cancel</button>
-                        </div>
-                    </form>
-                `;
-
+                    </div>
+                    
+                    <!-- Action Buttons (Save and Cancel) -->
+                    <div class="flex space-x-3 pt-2">
+                        <button type="submit" class="flex-1 bg-green-600 text-white font-bold py-2 rounded-lg shadow-md hover:bg-green-700 transition">Save Changes</button>
+                        <button type="button" onclick="renderJobs()" class="flex-1 bg-gray-300 text-gray-800 font-bold py-2 rounded-lg shadow-md hover:bg-gray-400 transition">Cancel</button>
+                    </div>
+                </form>
+            `;
+            
             cardElement.innerHTML = editFormHtml;
-
+            
             // Initialize custom radio button state for the newly created form
             const hackneyInput = document.getElementById(`editIsHackney-${id}`);
             const peabodyInput = document.getElementById(`editIsPeabody-${id}`);
-
+            
             if (hackneyInput) hackneyInput.wasCheckedBeforeClick = hackneyInput.checked;
             if (peabodyInput) peabodyInput.wasCheckedBeforeClick = peabodyInput.checked;
         }
@@ -746,26 +727,26 @@
         /**
          * Saves the changes made in the edit form back to Firestore.
          */
-        window.saveEdit = async function (event, id) {
+        window.saveEdit = async function(event, id) {
             event.preventDefault();
 
             if (!isAuthReady || !userId) return;
-
+            
             const addressInput = document.getElementById(`editAddress-${id}`);
             const labourInput = document.getElementById(`editLabourPrice-${id}`);
             const materialInput = document.getElementById(`editMaterialPrice-${id}`);
             const descInput = document.getElementById(`editDescription-${id}`);
-            const dateCompletedInput = document.getElementById(`editDateCompleted-${id}`);
-
+            const dateCompletedInput = document.getElementById(`editDateCompleted-${id}`); 
+            
             const selectedJobType = document.querySelector(`input[name="editJobType-${id}"]:checked`)?.value || '';
 
             const title = addressInput.value.trim();
             const description = descInput.value.trim();
-            const dateCompleted = dateCompletedInput.value.trim();
-
+            const dateCompleted = dateCompletedInput.value.trim(); 
+            
             const labourPrice = parseFloat(labourInput.value) || 0;
             const materialPrice = parseFloat(materialInput.value) || 0;
-
+            
             const isHackney = selectedJobType === 'hackney';
             const isPeabody = selectedJobType === 'peabody';
 
@@ -784,7 +765,7 @@
                 isPeabody,
                 dateCompleted,
             };
-
+            
             try {
                 const docRef = doc(getJobsCollectionRef(), id);
                 await setDoc(docRef, updatedData, { merge: true });
@@ -801,21 +782,21 @@
         /**
          * Initializes the application.
          */
-        window.onload = function () {
+        window.onload = function() {
             initFirebase();
-
+            
             // Initialize custom property for the creation form radios on load
             const hackneyCreate = document.getElementById('jobType-hackney');
             const peabodyCreate = document.getElementById('jobType-peabody');
 
             if (hackneyCreate) hackneyCreate.wasCheckedBeforeClick = hackneyCreate.checked;
             if (peabodyCreate) peabodyCreate.wasCheckedBeforeClick = peabodyCreate.checked;
-
+            
             // Setup listeners for the AI Modal close functionality
             document.getElementById('closeModal').addEventListener('click', closeModal);
             document.getElementById('aiModal').addEventListener('click', (e) => {
                 if (e.target === document.getElementById('aiModal')) {
-                    closeModal();
+                    closeModal(); 
                 }
             });
         };
@@ -823,10 +804,10 @@
     </script>
 </head>
 <body class="bg-gray-100 min-h-screen p-4 sm:p-8 font-sans">
-
+    
     <!-- MAIN CONTAINER: Controls the maximum width of the content -->
-    <div class="max-w-7xl mx-auto">
-
+    <div class="max-w-7xl mx-auto"> 
+        
         <!-- NAVIGATION HEADER -->
         <nav class="bg-white p-4 rounded-xl shadow-md flex justify-between items-center mb-6">
             <div class="flex items-center space-x-2">
@@ -874,7 +855,7 @@
                     <label for="jobDescription" class="block text-sm font-medium text-gray-700">Detailed Description</label>
                     <textarea id="jobDescription" rows="3" class="input-field"></textarea>
                 </div>
-
+                
                 <!-- Job Type Radio Buttons -->
                 <div class="mb-6">
                     <span class="block text-sm font-medium text-gray-700 mb-2">Job Type:</span>
@@ -900,7 +881,7 @@
 
         <!-- JOB LIST DISPLAY SECTION -->
         <h2 class="text-2xl font-semibold text-gray-800 mb-4">Completed Jobs By Week</h2>
-
+        
         <!-- Search Input Field -->
         <div class="relative mb-6">
             <input type="text" id="jobSearch" oninput="renderJobs()" placeholder="Search by address, description, or price..." class="input-field pl-10 bg-white">
@@ -909,7 +890,7 @@
                 <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
             </div>
         </div>
-
+        
         <!-- Loading Indicator for data fetching from Firestore -->
         <div id="loadingIndicator" class="text-center py-8" style="display:none;">
             <svg class="animate-spin h-8 w-8 text-indigo-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -925,11 +906,11 @@
         </div>
 
     </div>
-
+    
     <!-- AI Report Modal (Initially hidden) -->
     <div id="aiModal" class="modal fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50 opacity-0 pointer-events-none">
         <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl m-4 p-6 transform transition-all duration-300">
-
+            
             <!-- Modal Header -->
             <div class="flex justify-between items-center pb-3 border-b border-gray-200">
                 <h3 id="aiModalTitle" class="text-2xl font-bold text-indigo-700">AI Report</h3>
@@ -938,7 +919,7 @@
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
             </div>
-
+            
             <!-- Loading Indicator for AI generation -->
             <div id="aiLoadingIndicator" class="text-center py-8" style="display:none;">
                 <svg class="animate-spin h-8 w-8 text-green-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -952,7 +933,7 @@
             <div id="aiModalContent" class="py-4 max-h-96 overflow-y-auto text-gray-700 text-base">
                 <!-- AI-generated content will be inserted here -->
             </div>
-
+            
             <!-- Modal Footer -->
             <div class="pt-4 border-t border-gray-200 text-right">
                 <button onclick="closeModal()" class="bg-gray-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-gray-600 transition">Done</button>
