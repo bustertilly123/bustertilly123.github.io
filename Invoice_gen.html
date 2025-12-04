@@ -54,7 +54,8 @@
         // This function checks if the configuration is provided by the Canvas environment (__firebase_config).
         // If not (e.g., when deployed to GitHub Pages), it uses the hardcoded values below.
         //
-        // 🚨 ACTION REQUIRED: REPLACE ALL PLACEHOLDERS BELOW with your actual Firebase configuration object!
+        // 🚨 CRITICAL ACTION REQUIRED: REPLACE THE ENTIRE 'return' OBJECT BELOW
+        //    WITH YOUR ACTUAL FIREBASE CONFIGURATION OBJECT FROM YOUR PROJECT SETTINGS.
         //
         const FIREBASE_CONFIG = (function () {
             // Priority 1: Check if the Canvas global variable exists (running inside Canvas)
@@ -69,13 +70,14 @@
 
             // Priority 2: Use manual config if running outside Canvas (like on GitHub Pages)
             return {
+                // 🛑 PASTE YOUR REAL FIREBASE CONFIG VALUES HERE 🛑
                 apiKey: "AIzaSyAX7GYX247S69b6blLBcja-_IHU6Y9i3hI",
                 authDomain: "tools-9bf35.firebaseapp.com",
                 projectId: "tools-9bf35",
                 storageBucket: "tools-9bf35.firebasestorage.app",
                 messagingSenderId: "803649385600",
-                appId: "1:803649385600:web:79fc8ed25d35ebdf032265",// <-- PASTE YOUR APP ID HERE
-                measurementId: "G-EW9J3PX5NE"            
+                appId: "1:803649385600:web:79fc8ed25d35ebdf032265",
+                // 🛑 END OF REAL FIREBASE CONFIG VALUES 🛑
             };
         })(); // <--- Do not remove this closing parenthesis and semicolon!
 
@@ -90,6 +92,7 @@
         console.log("Using Firebase Config:", FIREBASE_CONFIG);
 
         const DB_COLLECTION = 'jobs';
+        const PLACEHOLDER_KEY = "YOUR_API_KEY_HERE"; // Used for checking if config was updated
 
         let app;
         let db;
@@ -114,10 +117,19 @@
             const statusDisplay = document.getElementById('authStatus');
             const loadingIndicator = document.getElementById('loadingIndicator');
 
+            // CRITICAL CHECK: Ensure the configuration was updated if running outside of Canvas
+            if (FIREBASE_CONFIG.apiKey === PLACEHOLDER_KEY && typeof __firebase_config === 'undefined') {
+                loadingIndicator.style.display = 'none';
+                const errorMessage = 'CRITICAL ERROR: Firebase configuration not found. Please replace the placeholder values in the FIREBASE_CONFIG block of the code with your actual project keys.';
+                console.error(errorMessage);
+                statusDisplay.textContent = errorMessage;
+                return; // Stop initialization
+            }
+
             try {
                 // 1. Validate the configuration
-                if (!FIREBASE_CONFIG || !FIREBASE_CONFIG.projectId || FIREBASE_CONFIG.projectId === 'YOUR_PROJECT_ID_HERE') {
-                    throw new Error('Firebase configuration is missing the required "projectId" or is using the default placeholder. Please update the FIREBASE_CONFIG object in the code.');
+                if (!FIREBASE_CONFIG || !FIREBASE_CONFIG.projectId) {
+                    throw new Error('Firebase configuration is missing the required "projectId".');
                 }
 
                 // 2. Initialize Firebase services
@@ -157,7 +169,12 @@
 
             } catch (error) {
                 console.error("Firebase Initialization or Auth Error:", error.message, error);
-                statusDisplay.textContent = `Error: Initialization failed (${error.message}). Check console.`;
+                // Specifically target the configuration error for better clarity
+                if (error.code === 'auth/configuration-not-found') {
+                    statusDisplay.textContent = 'CRITICAL ERROR: Firebase config is incorrect or missing. Check console for details.';
+                } else {
+                    statusDisplay.textContent = `Error: Initialization failed (${error.message}). Check console.`;
+                }
                 loadingIndicator.style.display = 'none';
             }
         }
@@ -174,7 +191,6 @@
             console.log("Setting up Firestore listener for user:", userId);
 
             const jobsQuery = query(getJobsCollectionRef());
-            const jobListContainer = document.getElementById('jobList');
             const loadingIndicator = document.getElementById('loadingIndicator');
 
             onSnapshot(jobsQuery, (snapshot) => {
