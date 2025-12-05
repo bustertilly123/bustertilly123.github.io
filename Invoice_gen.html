@@ -50,8 +50,9 @@
         let allJobs = [];  
         let isAuthReady = false; 
 
-        // --- Firebase Configuration & App ID Setup (Mandatory for Canvas) ---
-        const FIREBASE_CONFIG = (function() {
+        // --- CONFIGURATION: User's credentials are now inserted here. ---
+        //
+        const FIREBASE_CONFIG = (function () {
             if (typeof __firebase_config !== 'undefined') {
                 try {
                     return JSON.parse(__firebase_config);
@@ -59,10 +60,17 @@
                     console.error("Canvas Firebase config parse error:", e);
                     return {};
                 }
-            } 
-            // Fallback config (should be overridden by Canvas runtime)
-            return { projectId: "default-project" };
-        })(); 
+            }
+
+            return {
+                apiKey: "AIzaSyAX7GYX247S69b6blLBcja-_IHU6Y9i3hI",
+                authDomain: "tools-9bf35.firebaseapp.com",
+                projectId: "tools-9bf35",
+                storageBucket: "tools-9bf35.firebasestorage.app",
+                messagingSenderId: "803649385600",
+                appId: "1:803649385600:web:79fc8ed25d35ebdf032265"
+            };
+        })();
 
         const appId = typeof __app_id !== 'undefined' ? __app_id : FIREBASE_CONFIG.projectId || 'default-app-id';
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
