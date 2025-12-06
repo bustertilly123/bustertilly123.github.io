@@ -4,10 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Job Manager (Cloud Shared)</title>
-    <!-- Load Tailwind CSS from CDN for easy styling -->
+
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- Custom CSS for distinct styling elements (like the black borders) -->
     <style>
         .input-field {
             /* Tailwind classes for width, padding, shadow, and focus */
@@ -258,44 +259,42 @@
                 (job.isPeabody ? '<span class="text-red-600 font-bold ml-2">Peabody</span>' : 'Other');
 
             return `
-                    <div id="job-${job.id}" class="job-card bg-gray-50 p-5 rounded-lg shadow-sm border border-gray-100">
-                        <div class="flex justify-between items-start mb-3">
-                            <h3 class="text-xl font-bold text-gray-900">${job.title}</h3>
-                            <span class="text-sm font-medium text-gray-600">Completed: ${job.dateCompleted || 'N/A'}</span>
-                        </div>
+                        <div id="job-${job.id}" class="job-card bg-gray-50 p-5 rounded-lg shadow-sm border border-gray-100">
+                            <div class="flex justify-between items-start mb-3">
+                                <h3 class="text-xl font-bold text-gray-900">${job.title}</h3>
+                                <span class="text-sm font-medium text-gray-600">Completed: ${job.dateCompleted || 'N/A'}</span>
+                            </div>
 
-                        <!-- Cost Breakdown (Explicitly showing tax reduction) -->
-                        <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm text-gray-700 border-b pb-2">
-                            <div><span class="font-semibold text-gray-600">Labour Before Tax:</span> ${formatCurrency(costs.grossLabour)}</div>
-                            <div><span class="font-semibold text-gray-600">Labour After Tax:</span> ${formatCurrency(costs.netLabour)}</div>
-                            <div><span class="font-semibold text-gray-600">Material Cost:</span> ${formatCurrency(costs.material)}</div>
-                            <div class="col-span-2 border-t pt-2 mt-1 font-bold text-base text-indigo-700">
-                                <span class="font-semibold text-gray-600">TOTAL COST:</span> ${formatCurrency(costs.totalNet)}
+                            <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm text-gray-700 border-b pb-2">
+                                <div><span class="font-semibold text-gray-600">Labour Before Tax:</span> ${formatCurrency(costs.grossLabour)}</div>
+                                <div><span class="font-semibold text-gray-600">Labour After Tax:</span> ${formatCurrency(costs.netLabour)}</div>
+                                <div><span class="font-semibold text-gray-600">Material Cost:</span> ${formatCurrency(costs.material)}</div>
+                                <div class="col-span-2 border-t pt-2 mt-1 font-bold text-base text-indigo-700">
+                                    <span class="font-semibold text-gray-600">TOTAL COST:</span> ${formatCurrency(costs.totalNet)}
+                                </div>
+                            </div>
+
+                            <div class="mb-4 text-sm font-medium pt-3">
+                                <span class="font-semibold text-gray-600">Job Type:</span> ${jobTypeDisplay}
+                            </div>
+
+                            <p class="text-gray-600 mb-4 pt-1">
+                                <span class="font-semibold text-gray-600 block mb-1">Description:</span>
+                                ${job.description || 'No detailed description provided.'}
+                            </p>
+
+                            <div class="flex justify-between items-center text-sm text-gray-500 border-t pt-3">
+                                <span>Created: ${new Date(job.timestamp).toLocaleDateString()}</span>
+                                <div class="flex items-center space-x-2">
+                                    <button onclick="editJob('${job.id}')" class="text-indigo-600 hover:text-indigo-800 font-semibold transition">Edit</button>
+
+                                    <button onclick="deleteJob('${job.id}')" class="text-red-500 hover:text-red-700 transition ml-2">
+                                        <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                    </button>
+                                </div>
                             </div>
                         </div>
-
-                        <div class="mb-4 text-sm font-medium pt-3">
-                            <span class="font-semibold text-gray-600">Job Type:</span> ${jobTypeDisplay}
-                        </div>
-
-                        <p class="text-gray-600 mb-4 pt-1">
-                            <span class="font-semibold text-gray-600 block mb-1">Description:</span>
-                            ${job.description || 'No detailed description provided.'}
-                        </p>
-
-                        <div class="flex justify-between items-center text-sm text-gray-500 border-t pt-3">
-                            <span>Created: ${new Date(job.timestamp).toLocaleDateString()}</span>
-                            <div class="flex items-center space-x-2">
-                                <button onclick="editJob('${job.id}')" class="text-indigo-600 hover:text-indigo-800 font-semibold transition">Edit</button>
-
-                                <button onclick="deleteJob('${job.id}')" class="text-red-500 hover:text-red-700 transition ml-2">
-                                    <!-- Trash Can Icon SVG -->
-                                    <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                `;
+                    `;
         }
 
         /**
@@ -344,18 +343,27 @@
 
                 const groupElement = document.createElement('div');
                 groupElement.className = 'week-group mb-6';
+
+                // Group Header with Export Button
                 groupElement.innerHTML = `
-                        <button id="toggle-${weekStartDate}"
-                                class="flex justify-between items-center w-full p-4 bg-indigo-600 text-white rounded-t-xl shadow-md hover:bg-indigo-700 transition"
-                                onclick="toggleWeekDisplay('${weekStartDate}')" aria-expanded="true">
-                            <span class="text-xl font-semibold">${weekTitle} (${weekJobs.length} Jobs)</span>
-                            <span class="text-xl font-bold">Total: ${formatCurrency(totalWeekCost)}</span>
-                            <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                        </button>
-                        <div id="jobs-${weekStartDate}" class="jobs-container space-y-4 p-4 bg-white border border-t-0 border-gray-200 rounded-b-xl">
-                            <!-- Job Cards injected here -->
+                        <div class="flex items-center bg-indigo-600 text-white rounded-t-xl shadow-md">
+                            <button id="toggle-${weekStartDate}"
+                                    class="flex-1 flex justify-between items-center p-4 hover:bg-indigo-700 transition"
+                                    onclick="toggleWeekDisplay('${weekStartDate}')" aria-expanded="true">
+                                <span class="text-xl font-semibold">${weekTitle} (${weekJobs.length} Jobs)</span>
+                                <span class="text-xl font-bold">Total: ${formatCurrency(totalWeekCost)}</span>
+                                <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300 ml-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                            </button>
+                            <button onclick="exportToXLSX('${weekStartDate}')"
+                                    class="bg-green-600 h-full px-4 py-4 rounded-tr-xl hover:bg-green-700 transition text-sm font-bold border-l border-indigo-500">
+                                Export Week
+                            </button>
                         </div>
+                        <div id="jobs-${weekStartDate}" class="jobs-container space-y-4 p-4 bg-white border border-t-0 border-gray-200 rounded-b-xl">
+                            </div>
                     `;
+                // End Group Header
+
                 jobListContainer.appendChild(groupElement);
 
                 const container = document.getElementById(`jobs-${weekStartDate}`);
@@ -450,33 +458,33 @@
             const checkedValue = job.isHackney ? 'hackney' : (job.isPeabody ? 'peabody' : null);
 
             const editFormHtml = `
-                    <form id="editForm-${id}" class="space-y-4" onsubmit="saveEdit(event, '${id}')">
-                        <div><label for="editAddress-${id}" class="block text-sm font-medium text-gray-700">Job Address</label><input type="text" id="editAddress-${id}" required class="input-field" value="${job.address}"></div>
-                        <div class="mb-4"><label for="editDateCompleted-${id}" class="block text-sm font-medium text-gray-700">Date Completed</label><input type="date" id="editDateCompleted-${id}" class="input-field" value="${job.dateCompleted || ''}"></div>
-                        <div class="grid grid-cols-2 gap-4">
-                            <div><label for="editLabourPrice-${id}" class="block text-sm font-medium text-gray-700">Labour Price (£)</label><input type="number" id="editLabourPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.labourPrice || ''}"></div>
-                            <div><label for="editMaterialPrice-${id}" class="block text-sm font-medium text-gray-700">Material Price (£)</label><input type="number" id="editMaterialPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.materialPrice || ''}"></div>
-                        </div>
-                        <div><label for="editDescription-${id}" class="block text-sm font-medium text-gray-700">Description</label><textarea id="editDescription-${id}" rows="3" class="input-field">${job.description || ''}</textarea></div>
+                        <form id="editForm-${id}" class="space-y-4" onsubmit="saveEdit(event, '${id}')">
+                            <div><label for="editAddress-${id}" class="block text-sm font-medium text-gray-700">Job Address</label><input type="text" id="editAddress-${id}" required class="input-field" value="${job.address}"></div>
+                            <div class="mb-4"><label for="editDateCompleted-${id}" class="block text-sm font-medium text-gray-700">Date Completed</label><input type="date" id="editDateCompleted-${id}" class="input-field" value="${job.dateCompleted || ''}"></div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div><label for="editLabourPrice-${id}" class="block text-sm font-medium text-gray-700">Labour Price (£)</label><input type="number" id="editLabourPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.labourPrice || ''}"></div>
+                                <div><label for="editMaterialPrice-${id}" class="block text-sm font-medium text-gray-700">Material Price (£)</label><input type="number" id="editMaterialPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.materialPrice || ''}"></div>
+                            </div>
+                            <div><label for="editDescription-${id}" class="block text-sm font-medium text-gray-700">Description</label><textarea id="editDescription-${id}" rows="3" class="input-field">${job.description || ''}</textarea></div>
 
-                        <div class="space-y-2"><span class="block text-sm font-medium text-gray-700">Job Type:</span>
-                            <div class="flex space-x-6">
-                                <div class="flex items-center">
-                                    <input id="editIsHackney-${id}" type="radio" name="editJobType-${id}" value="hackney" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'hackney' ? 'checked' : ''} onclick="handleRadioClick(event)">
-                                    <label for="editIsHackney-${id}" class="ml-2 block text-sm font-medium text-gray-700">Hackney</label>
-                                </div>
-                                <div class="flex items-center">
-                                    <input id="editIsPeabody-${id}" type="radio" name="editJobType-${id}" value="peabody" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'peabody' ? 'checked' : ''} onclick="handleRadioClick(event)">
-                                    <label for="editIsPeabody-${id}" class="ml-2 block text-sm font-medium text-gray-700">Peabody</label>
+                            <div class="space-y-2"><span class="block text-sm font-medium text-gray-700">Job Type:</span>
+                                <div class="flex space-x-6">
+                                    <div class="flex items-center">
+                                        <input id="editIsHackney-${id}" type="radio" name="editJobType-${id}" value="hackney" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'hackney' ? 'checked' : ''} onclick="handleRadioClick(event)">
+                                        <label for="editIsHackney-${id}" class="ml-2 block text-sm font-medium text-gray-700">Hackney</label>
+                                    </div>
+                                    <div class="flex items-center">
+                                        <input id="editIsPeabody-${id}" type="radio" name="editJobType-${id}" value="peabody" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'peabody' ? 'checked' : ''} onclick="handleRadioClick(event)">
+                                        <label for="editIsPeabody-${id}" class="ml-2 block text-sm font-medium text-gray-700">Peabody</label>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
 
-                        <div class="flex space-x-3 pt-2">
-                            <button type="submit" class="flex-1 bg-green-600 text-white font-bold py-2 rounded-lg shadow-md hover:bg-green-700 transition">Save Changes</button>
-                            <button type="button" onclick="renderJobs()" class="flex-1 bg-gray-300 text-gray-800 font-bold py-2 rounded-lg shadow-md hover:bg-gray-400 transition">Cancel</button>
-                        </div>
-                    </form>`;
+                            <div class="flex space-x-3 pt-2">
+                                <button type="submit" class="flex-1 bg-green-600 text-white font-bold py-2 rounded-lg shadow-md hover:bg-green-700 transition">Save Changes</button>
+                                <button type="button" onclick="renderJobs()" class="flex-1 bg-gray-300 text-gray-800 font-bold py-2 rounded-lg shadow-md hover:bg-gray-400 transition">Cancel</button>
+                            </div>
+                        </form>`;
 
             cardElement.innerHTML = editFormHtml;
 
@@ -518,6 +526,193 @@
             }
         }
 
+        /**
+         * Helper function to encapsulate the SheetJS generation logic.
+         * @param {Array<Object>} jobs - The list of jobs to export.
+         * @param {string} type - 'Peabody' or 'Other' for filename generation.
+         * @param {string} weekStartDate - The YYYY-MM-DD date of the week to export.
+         */
+        const generateXLSX = function (jobs, type, weekStartDate) {
+            if (jobs.length === 0) return;
+
+            // 1. Map data to the new 5-column structure
+            const excelData = jobs.map(job => {
+                const costs = calculateNetJobCost(job);
+
+                // Use the raw number values for Labour and Materials
+                return {
+                    Address: job.title,
+                    Code: "",
+                    Labour: costs.grossLabour, // Raw number for proper Excel calculation
+                    Materials: costs.material,  // Raw number for proper Excel calculation
+                    Description: job.description
+                };
+            });
+
+            const headers = ["Address", "Code", "Labour", "Materials", "Description"];
+
+            // 2. Define the worksheet and workbook
+            const worksheet = XLSX.utils.json_to_sheet(excelData, {
+                header: headers,
+                skipHeader: false
+            });
+
+            if (!worksheet['!ref']) {
+                console.warn(`Worksheet reference is missing after data mapping for ${type} jobs.`);
+                return;
+            }
+
+            let range = XLSX.utils.decode_range(worksheet['!ref']);
+            const currencyFormat = '£#,##0.00';
+
+            // Utility to safely add a text cell
+            const setCellText = (ws, c, r, text) => {
+                const cellRef = XLSX.utils.encode_cell({ c: c, r: r });
+                ws[cellRef] = { v: text, t: 's' }; // t: 's' for string (text)
+            };
+
+            // 3. Apply Currency Formatting to Data Rows
+            for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+                // Column C (Labour) - column index 2
+                const labourCellRef = XLSX.utils.encode_cell({ c: 2, r: R });
+                if (worksheet[labourCellRef]) {
+                    worksheet[labourCellRef].z = currencyFormat;
+                }
+
+                // Column D (Materials) - column index 3
+                const materialCellRef = XLSX.utils.encode_cell({ c: 3, r: R });
+                if (worksheet[materialCellRef]) {
+                    worksheet[materialCellRef].z = currencyFormat;
+                }
+            }
+
+
+            // 4. Add Total Labour, Total Materials, and Final Total Footer
+
+            const lastExcelDataRow = range.e.r + 1;
+            const titleRowIndex = range.e.r + 2;
+            const valueRowIndex = range.e.r + 3;
+
+            const sumRangeLabour = `C2:C${lastExcelDataRow}`;
+            const sumRangeMaterials = `D2:D${lastExcelDataRow}`;
+            const excelValueRowNumber = valueRowIndex + 1; // Excel rows are 1-indexed
+
+            // 4a. Set Titles in the Title Row (C, D, and E)
+            setCellText(worksheet, 2, titleRowIndex, 'Total Labour');      // C (Labour) Title Row
+            setCellText(worksheet, 3, titleRowIndex, 'Total Materials');  // D (Materials) Title Row
+            setCellText(worksheet, 4, titleRowIndex, 'Final Total');      // E (Description) Title Row
+
+            // 4b. Set the 'GRAND TOTALS' Label in the Value Row (A)
+            setCellText(worksheet, 0, valueRowIndex, 'GRAND TOTALS');    // A (Address) Value Row
+
+            // 4c. Set the Total Labour Value (Formula) in Column C
+            const labourValueRef = XLSX.utils.encode_cell({ c: 2, r: valueRowIndex });
+            worksheet[labourValueRef] = { t: 'n', f: `SUM(${sumRangeLabour})`, z: currencyFormat };
+
+            // 4d. Set the Total Materials Value (Formula) in Column D
+            const materialValueRef = XLSX.utils.encode_cell({ c: 3, r: valueRowIndex });
+            worksheet[materialValueRef] = { t: 'n', f: `SUM(${sumRangeMaterials})`, z: currencyFormat };
+
+            // 4e. Set the Final Total Value (Formula) in Column E (Description)
+            const finalTotalValueRef = XLSX.utils.encode_cell({ c: 4, r: valueRowIndex });
+            const finalTotalFormula = `C${excelValueRowNumber}+D${excelValueRowNumber}`;
+            worksheet[finalTotalValueRef] = { t: 'n', f: finalTotalFormula, z: currencyFormat };
+
+            // Update the worksheet's bounding box to include the new footer rows
+            range.e.r = valueRowIndex;
+            worksheet['!ref'] = XLSX.utils.encode_range(range);
+
+
+            // 5. Auto-size Column Logic
+            const wscols = headers.map(header => {
+                let maxLen = header.length;
+                const colIndex = headers.indexOf(header);
+
+                for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+                    const cellRef = XLSX.utils.encode_cell({ c: colIndex, r: R });
+                    const cell = worksheet[cellRef];
+
+                    if (cell && cell.v !== null && cell.v !== undefined) {
+                        let len = String(cell.v).length;
+
+                        if (cell.z && cell.z === currencyFormat && (header === 'Labour' || header === 'Materials' || header === 'Description')) {
+                            len = 10;
+                        } else if (cell.t === 's' && cell.v) {
+                            len = cell.v.length;
+                        } else if (cell.t === 'n' && cell.w) {
+                            len = cell.w.length;
+                        }
+
+                        if (len > maxLen) {
+                            maxLen = len;
+                        }
+                    } else if (cell && cell.t === 's' && cell.v) {
+                        if (cell.v.length > maxLen) {
+                            maxLen = cell.v.length;
+                        }
+                    }
+                }
+
+                return { wch: Math.min(maxLen + 2, 50) };
+            });
+
+            worksheet['!cols'] = wscols;
+
+            // 6. Trigger download
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, `${type} Report`);
+
+            const weekTitleForFile = formatWeekRange(weekStartDate);
+            const safeWeekTitle = weekTitleForFile.replace(/[^a-zA-Z0-9]/g, '_');
+
+            // Filename includes the job type (Peabody or Other)
+            XLSX.writeFile(workbook, `Job_Report_${type}_${safeWeekTitle}.xlsx`);
+        };
+
+
+        /**
+         * Generates and downloads two separate XLSX files: one for Peabody jobs and one for Other jobs.
+         * @param {string} targetWeekStartDate - The YYYY-MM-DD date of the Monday for the week to export.
+         */
+        window.exportToXLSX = function (targetWeekStartDate) {
+
+            // 1. Filter jobs for the specific week
+            const jobsToExport = allJobs.filter(job => getWeekStartDate(job.dateCompleted) === targetWeekStartDate);
+
+            if (jobsToExport.length === 0) {
+                alert(`No jobs found for the week starting ${targetWeekStartDate} to export.`);
+                return;
+            }
+
+            // 2. Split jobs into two categories
+            const peabodyJobs = jobsToExport.filter(job => job.isPeabody);
+            // 'Other' includes Hackney and non-Hackney/non-Peabody jobs
+            const otherJobs = jobsToExport.filter(job => !job.isPeabody);
+
+            let exportedCount = 0;
+
+            // 3. Export Peabody Jobs
+            if (peabodyJobs.length > 0) {
+                generateXLSX(peabodyJobs, 'Peabody', targetWeekStartDate);
+                exportedCount++;
+            } else {
+                console.log('No Peabody jobs to export for this week.');
+            }
+
+            // 4. Export Other Jobs
+            if (otherJobs.length > 0) {
+                generateXLSX(otherJobs, 'Other', targetWeekStartDate);
+                exportedCount++;
+            } else {
+                console.log('No Other jobs to export for this week.');
+            }
+
+            if (exportedCount > 0) {
+                alert(`Export complete! ${exportedCount} file(s) created for the week of ${targetWeekStartDate}. Check your downloads folder.`);
+            }
+        };
+
+
         // ==========================================================
         // SECTION 6: INITIALIZATION
         // ==========================================================
@@ -537,21 +732,26 @@
 </head>
 <body class="bg-gray-100 min-h-screen p-4 sm:p-8 font-sans">
 
-    <!-- MAIN CONTAINER -->
     <div class="max-w-7xl mx-auto">
 
-        <!-- NAVIGATION HEADER -->
         <nav class="bg-white p-4 rounded-xl shadow-md flex justify-between items-center mb-6">
             <div class="flex items-center space-x-2">
                 <svg class="w-7 h-7 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
                 <span class="text-xl font-bold text-gray-800">Job Manager (Cloud Shared)</span>
             </div>
-            <span id="authStatus" class="text-sm text-gray-600">Initializing...</span>
+            <div class="flex items-center space-x-2">
+                <div id="loadingIndicator" class="text-center" style="display:none;">
+                    <svg class="animate-spin h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </div>
+                <span id="authStatus" class="text-sm text-gray-600">Initializing...</span>
+            </div>
         </nav>
 
         <h1 class="text-3xl font-extrabold text-gray-800 text-center mb-6">Manage Your Jobs</h1>
 
-        <!-- JOB CREATION FORM SECTION -->
         <div class="bg-white p-6 rounded-xl shadow-lg border border-indigo-200 mb-8">
             <h2 class="text-2xl font-semibold text-gray-800 mb-4">Create New Job</h2>
             <form onsubmit="addJob(event)">
@@ -602,10 +802,8 @@
             </form>
         </div>
 
-        <!-- JOB LIST DISPLAY SECTION -->
         <h2 class="text-2xl font-semibold text-gray-800 mb-4">Completed Jobs By Week</h2>
 
-        <!-- Search Input Field -->
         <div class="relative mb-6">
             <input type="text" id="jobSearch" oninput="renderJobs()" placeholder="Search by address, description, or price..." class="input-field pl-10 bg-white">
             <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
@@ -613,7 +811,6 @@
             </div>
         </div>
 
-        <!-- Loading Indicator -->
         <div id="loadingIndicator" class="text-center py-8" style="display:none;">
             <svg class="animate-spin h-8 w-8 text-indigo-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -622,7 +819,6 @@
             <p class="mt-2 text-indigo-500">Loading jobs from cloud...</p>
         </div>
 
-        <!-- Job List Container -->
         <div id="jobList" class="space-y-4">
             <p class="text-center text-gray-500 py-10">Waiting for data connection...</p>
         </div>
