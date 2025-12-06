@@ -20,9 +20,21 @@
         input[type="radio"] {
             border: 2px solid #000000;
         }
+
+        /* Styling to prevent rotation on details open */
+        .jobs-container:not([style*="display: none"]) + .week-group .rotate-180 {
+            transform: rotate(0deg) !important;
+        }
     </style>
 
     <script type="module">
+        // ===============================================
+        // SECTION 0: DOCX & UTILITY IMPORTS
+        // ===============================================
+        import PizZip from "https://esm.sh/pizzip@3.1.6";
+        import Docxtemplater from "https://esm.sh/docxtemplater";
+        import saveAs from "https://esm.sh/file-saver";
+
         // Import necessary Firebase modules
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import {
@@ -32,7 +44,6 @@
             getFirestore, doc, setDoc, onSnapshot, collection, query, deleteDoc, setLogLevel
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Enable debug logging for Firebase (optional, for console checks)
         setLogLevel('debug');
 
         // ==========================================================
@@ -52,7 +63,7 @@
         let isAuthReady = false;
 
         // --- CONFIGURATION: User's credentials are now inserted here. ---
-        //
+        // You MUST replace the placeholder values below with your actual Firebase config.
         const FIREBASE_CONFIG = (function () {
             if (typeof __firebase_config !== 'undefined') {
                 try {
@@ -76,21 +87,28 @@
         const appId = typeof __app_id !== 'undefined' ? __app_id : FIREBASE_CONFIG.projectId || 'default-app-id';
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
+        // --- NEW CLIENT ADDRESS DATA ---
+        const CLIENT_DATA = {
+            FRESHBUILD: {
+                name: 'FRESHBUILD LIMITED',
+                address: 'SHALIMER, CRICKET GROUND RD\nCHISLEHURST\nKENT\nBR7 5HD'
+            },
+            SALTASH: {
+                name: 'SALTASH ENTERPRISES LIMITED',
+                address: '110- 116 ORMSIDE STREET\nLONDON, SE15 1TF'
+            }
+        };
+
+
         // ==========================================================
         // SECTION 2: FIREBASE INITIALIZATION & AUTH
         // ==========================================================
 
-        /**
-         * Generates the secure Firestore collection reference path for shared/public data.
-         */
         function getJobsCollectionRef() {
             const collectionPath = `artifacts/${appId}/public/data/${DB_COLLECTION}`;
             return collection(db, collectionPath);
         }
 
-        /**
-         * Initializes Firebase services and handles user authentication.
-         */
         async function initFirebase() {
             const statusDisplay = document.getElementById('authStatus');
             const loadingIndicator = document.getElementById('loadingIndicator');
@@ -106,7 +124,6 @@
                     app = initializeApp(FIREBASE_CONFIG);
                     db = getFirestore(app);
                     auth = getAuth(app);
-                    // Use local storage persistence to keep the user signed in across sessions
                     await setPersistence(auth, browserLocalPersistence);
                 }
 
@@ -122,7 +139,6 @@
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         userId = user.uid;
-                        // Display truncated User ID for compliance
                         statusDisplay.textContent = `Status: Authenticated (User ID: ${userId.substring(0, 8)}...)`;
 
                         if (!isAuthReady) {
@@ -142,9 +158,6 @@
             }
         }
 
-        /**
-         * Establishes a real-time connection to the Firestore database and updates the job list.
-         */
         function setupRealTimeListener() {
             if (!userId) return;
 
@@ -169,28 +182,20 @@
         // SECTION 3: UTILITIES & CALCULATIONS
         // ==========================================================
 
-        /**
-         * Formats a number as GBP currency string (£XX.XX).
-         */
         function formatCurrency(value) {
             const num = parseFloat(value);
             if (isNaN(num)) return '£0.00';
             return '£' + num.toFixed(2);
         }
 
-        /**
-         * Calculates the total net cost for a single job after the labour tax.
-         */
         function calculateNetJobCost(job) {
 
-            // Robust parsing: Treat undefined/null/non-numeric values as 0.
             const rawLabour = job.labourPrice;
             const rawMaterial = job.materialPrice;
 
             const labour = parseFloat(rawLabour) || 0;
             const material = parseFloat(rawMaterial) || 0;
 
-            // Apply 20% reduction (tax) to the labour price
             const labourAfterTax = labour * LABOUR_AFTER_TAX_MULTIPLIER;
 
             return {
@@ -201,15 +206,11 @@
             };
         }
 
-        /**
-         * Calculates the date of the Monday (start) for the week containing the job's completion date.
-         */
         function getWeekStartDate(dateString) {
             if (!dateString) return 'Unscheduled';
 
             const date = new Date(dateString + 'T00:00:00');
-            const day = date.getDay(); // 0 = Sunday, 1 = Monday
-            // Calculate the difference to get to Monday. Handles Sunday (day 0) correctly by subtracting 6.
+            const day = date.getDay();
             const diff = date.getDate() - day + (day === 0 ? -6 : 1);
 
             const monday = new Date(date.setDate(diff));
@@ -217,24 +218,18 @@
             return monday.toISOString().split('T')[0];
         }
 
-        /**
-         * Formats the week start date into a human-readable date range.
-         */
         function formatWeekRange(dateString) {
             if (dateString === 'Unscheduled') return 'Unscheduled Jobs';
 
             const start = new Date(dateString + 'T00:00:00');
             const end = new Date(start);
-            end.setDate(start.getDate() + 6); // End of the week is 6 days after Monday
+            end.setDate(start.getDate() + 6);
 
             const formatter = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
             return `Week of ${formatter.format(start)} – ${formatter.format(end)}`;
         }
 
-        /**
-         * Custom click handler for radio buttons to allow deselection.
-         */
         window.handleRadioClick = function (event) {
             const radio = event.target;
             const wasCheckedBeforeClick = radio.wasCheckedBeforeClick;
@@ -250,63 +245,56 @@
         // SECTION 4: RENDERING & DISPLAY LOGIC
         // ==========================================================
 
-        /**
-         * Generates the HTML string for a single read-only job card.
-         */
         function createJobCardHtml(job) {
             const costs = calculateNetJobCost(job);
             const jobTypeDisplay = job.isHackney ? '<span class="text-blue-600 font-bold ml-2">Hackney</span>' :
                 (job.isPeabody ? '<span class="text-red-600 font-bold ml-2">Peabody</span>' : 'Other');
 
             return `
-                        <div id="job-${job.id}" class="job-card bg-gray-50 p-5 rounded-lg shadow-sm border border-gray-100">
-                            <div class="flex justify-between items-start mb-3">
-                                <h3 class="text-xl font-bold text-gray-900">${job.title}</h3>
-                                <span class="text-sm font-medium text-gray-600">Completed: ${job.dateCompleted || 'N/A'}</span>
-                            </div>
+                            <div id="job-${job.id}" class="job-card bg-gray-50 p-5 rounded-lg shadow-sm border border-gray-100">
+                                <div class="flex justify-between items-start mb-3">
+                                    <h3 class="text-xl font-bold text-gray-900">${job.title}</h3>
+                                    <span class="text-sm font-medium text-gray-600">Completed: ${job.dateCompleted || 'N/A'}</span>
+                                </div>
 
-                            <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm text-gray-700 border-b pb-2">
-                                <div><span class="font-semibold text-gray-600">Labour Before Tax:</span> ${formatCurrency(costs.grossLabour)}</div>
-                                <div><span class="font-semibold text-gray-600">Labour After Tax:</span> ${formatCurrency(costs.netLabour)}</div>
-                                <div><span class="font-semibold text-gray-600">Material Cost:</span> ${formatCurrency(costs.material)}</div>
-                                <div class="col-span-2 border-t pt-2 mt-1 font-bold text-base text-indigo-700">
-                                    <span class="font-semibold text-gray-600">TOTAL COST:</span> ${formatCurrency(costs.totalNet)}
+                                <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm text-gray-700 border-b pb-2">
+                                    <div><span class="font-semibold text-gray-600">Labour Before Tax:</span> ${formatCurrency(costs.grossLabour)}</div>
+                                    <div><span class="font-semibold text-gray-600">Labour After Tax:</span> ${formatCurrency(costs.netLabour)}</div>
+                                    <div><span class="font-semibold text-gray-600">Material Cost:</span> ${formatCurrency(costs.material)}</div>
+                                    <div class="col-span-2 border-t pt-2 mt-1 font-bold text-base text-indigo-700">
+                                        <span class="font-semibold text-gray-600">TOTAL COST:</span> ${formatCurrency(costs.totalNet)}
+                                    </div>
+                                </div>
+
+                                <div class="mb-4 text-sm font-medium pt-3">
+                                    <span class="font-semibold text-gray-600">Job Type:</span> ${jobTypeDisplay}
+                                </div>
+
+                                <p class="text-gray-600 mb-4 pt-1">
+                                    <span class="font-semibold text-gray-600 block mb-1">Description:</span>
+                                    ${job.description || 'No detailed description provided.'}
+                                </p>
+
+                                <div class="flex justify-between items-center text-sm text-gray-500 border-t pt-3">
+                                    <span>Created: ${new Date(job.timestamp).toLocaleDateString()}</span>
+                                    <div class="flex items-center space-x-2">
+                                        <button onclick="editJob('${job.id}')" class="text-indigo-600 hover:text-indigo-800 font-semibold transition">Edit</button>
+
+                                        <button onclick="deleteJob('${job.id}')" class="text-red-500 hover:text-red-700 transition ml-2">
+                                            <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
-
-                            <div class="mb-4 text-sm font-medium pt-3">
-                                <span class="font-semibold text-gray-600">Job Type:</span> ${jobTypeDisplay}
-                            </div>
-
-                            <p class="text-gray-600 mb-4 pt-1">
-                                <span class="font-semibold text-gray-600 block mb-1">Description:</span>
-                                ${job.description || 'No detailed description provided.'}
-                            </p>
-
-                            <div class="flex justify-between items-center text-sm text-gray-500 border-t pt-3">
-                                <span>Created: ${new Date(job.timestamp).toLocaleDateString()}</span>
-                                <div class="flex items-center space-x-2">
-                                    <button onclick="editJob('${job.id}')" class="text-indigo-600 hover:text-indigo-800 font-semibold transition">Edit</button>
-
-                                    <button onclick="deleteJob('${job.id}')" class="text-red-500 hover:text-red-700 transition ml-2">
-                                        <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    `;
+                        `;
         }
 
-        /**
-         * Main rendering function. Filters, groups, sorts, and displays all jobs.
-         */
         window.renderJobs = function () {
             const jobListContainer = document.getElementById('jobList');
             jobListContainer.innerHTML = '';
 
             const searchTerm = document.getElementById('jobSearch').value.toLowerCase().trim();
 
-            // 1. Filter based on search term
             const filteredJobs = searchTerm
                 ? allJobs.filter(job =>
                     [job.title, job.description, formatCurrency(job.labourPrice), formatCurrency(job.materialPrice)]
@@ -318,7 +306,6 @@
                 return;
             }
 
-            // 2. Group jobs by their week start date (Monday)
             const groupedJobs = filteredJobs.reduce((acc, job) => {
                 const weekStartDate = getWeekStartDate(job.dateCompleted);
                 if (!acc[weekStartDate]) acc[weekStartDate] = [];
@@ -326,50 +313,44 @@
                 return acc;
             }, {});
 
-            // 3. Sort groups (Descending date order, 'Unscheduled' last)
             const sortedGroupKeys = Object.keys(groupedJobs).sort((a, b) => {
                 if (a === 'Unscheduled') return 1;
                 if (b === 'Unscheduled') return -1;
                 return new Date(b) - new Date(a);
             });
 
-            // 4. Render each group
             sortedGroupKeys.forEach(weekStartDate => {
                 const weekJobs = groupedJobs[weekStartDate].sort((a, b) => b.timestamp - a.timestamp);
                 const weekTitle = formatWeekRange(weekStartDate);
 
-                // Calculate Weekly Net Cost
                 const totalWeekCost = weekJobs.reduce((sum, job) => sum + calculateNetJobCost(job).totalNet, 0);
 
                 const groupElement = document.createElement('div');
                 groupElement.className = 'week-group mb-6';
 
-                // Group Header with Export Button
                 groupElement.innerHTML = `
-                        <div class="flex items-center bg-indigo-600 text-white rounded-t-xl shadow-md">
-                            <button id="toggle-${weekStartDate}"
-                                    class="flex-1 flex justify-between items-center p-4 hover:bg-indigo-700 transition"
-                                    onclick="toggleWeekDisplay('${weekStartDate}')" aria-expanded="true">
-                                <span class="text-xl font-semibold">${weekTitle} (${weekJobs.length} Jobs)</span>
-                                <span class="text-xl font-bold">Total: ${formatCurrency(totalWeekCost)}</span>
-                                <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300 ml-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                            </button>
-                            <button onclick="exportToXLSX('${weekStartDate}')"
-                                    class="bg-green-600 h-full px-4 py-4 rounded-tr-xl hover:bg-green-700 transition text-sm font-bold border-l border-indigo-500">
-                                Export Week
-                            </button>
-                        </div>
-                        <div id="jobs-${weekStartDate}" class="jobs-container space-y-4 p-4 bg-white border border-t-0 border-gray-200 rounded-b-xl">
+                            <div class="flex items-center bg-indigo-600 text-white rounded-t-xl shadow-md">
+                                <button id="toggle-${weekStartDate}"
+                                        class="flex-1 flex justify-between items-center p-4 hover:bg-indigo-700 transition"
+                                        onclick="toggleWeekDisplay('${weekStartDate}')" aria-expanded="true">
+                                    <span class="text-xl font-semibold">${weekTitle} (${weekJobs.length} Jobs)</span>
+                                    <span class="text-xl font-bold">Total: ${formatCurrency(totalWeekCost)}</span>
+                                    <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300 ml-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                </button>
+                                <button onclick="exportWeekData('${weekStartDate}')"
+                                        class="bg-green-600 h-full px-4 py-4 rounded-tr-xl hover:bg-green-700 transition text-sm font-bold border-l border-indigo-500">
+                                    Export Week
+                                </button>
                             </div>
-                    `;
-                // End Group Header
+                            <div id="jobs-${weekStartDate}" class="jobs-container space-y-4 p-4 bg-white border border-t-0 border-gray-200 rounded-b-xl">
+                                </div>
+                        `;
 
                 jobListContainer.appendChild(groupElement);
 
                 const container = document.getElementById(`jobs-${weekStartDate}`);
                 weekJobs.forEach(job => container.insertAdjacentHTML('beforeend', createJobCardHtml(job)));
 
-                // Collapse groups by default unless search is active or it's 'Unscheduled'
                 const shouldCollapse = (weekStartDate !== 'Unscheduled' && !searchTerm);
                 if (shouldCollapse) {
                     container.style.display = 'none';
@@ -378,9 +359,6 @@
             });
         }
 
-        /**
-         * Toggles the visibility of a weekly job group.
-         */
         window.toggleWeekDisplay = function (weekStartDate) {
             const container = document.getElementById(`jobs-${weekStartDate}`);
             const arrow = document.getElementById(`arrow-${weekStartDate}`);
@@ -391,12 +369,9 @@
         }
 
         // ==========================================================
-        // SECTION 5: CRUD OPERATIONS (Firestore)
+        // SECTION 5: CRUD OPERATIONS
         // ==========================================================
 
-        /**
-         * Gathers data from the creation form and adds a new job document to Firestore.
-         */
         window.addJob = async function (event) {
             event.preventDefault();
 
@@ -407,13 +382,12 @@
             const selectedJobType = Array.from(jobTypeRadios).find(radio => radio.checked)?.value;
 
             const title = form.elements['jobAddress'].value.trim();
-            if (!title) return; // Basic validation
+            if (!title) return;
 
             const jobData = {
                 title,
                 address: title,
                 description: form.elements['jobDescription'].value.trim(),
-                // Store values as numbers (or 0)
                 labourPrice: parseFloat(form.elements['labourPrice'].value) || 0,
                 materialPrice: parseFloat(form.elements['materialPrice'].value) || 0,
                 isHackney: selectedJobType === 'hackney',
@@ -423,10 +397,8 @@
             };
 
             try {
-                // Creates a new document with an auto-generated ID
                 await setDoc(doc(getJobsCollectionRef()), jobData);
                 form.reset();
-                // Re-initialize custom radio state after form reset
                 Array.from(jobTypeRadios).forEach(radio => radio.wasCheckedBeforeClick = false);
             } catch (e) {
                 console.error("Error adding document: ", e);
@@ -434,9 +406,6 @@
             }
         }
 
-        /**
-         * Deletes a job document from Firestore.
-         */
         window.deleteJob = async function (id) {
             if (!isAuthReady || !userId) return;
             try {
@@ -447,9 +416,6 @@
             }
         }
 
-        /**
-         * Renders an inline form to edit a specific job card.
-         */
         window.editJob = function (id) {
             const job = allJobs.find(j => j.id === id);
             if (!job) return;
@@ -458,59 +424,53 @@
             const checkedValue = job.isHackney ? 'hackney' : (job.isPeabody ? 'peabody' : null);
 
             const editFormHtml = `
-                        <form id="editForm-${id}" class="space-y-4" onsubmit="saveEdit(event, '${id}')">
-                            <div><label for="editAddress-${id}" class="block text-sm font-medium text-gray-700">Job Address</label><input type="text" id="editAddress-${id}" required class="input-field" value="${job.address}"></div>
-                            <div class="mb-4"><label for="editDateCompleted-${id}" class="block text-sm font-medium text-gray-700">Date Completed</label><input type="date" id="editDateCompleted-${id}" class="input-field" value="${job.dateCompleted || ''}"></div>
-                            <div class="grid grid-cols-2 gap-4">
-                                <div><label for="editLabourPrice-${id}" class="block text-sm font-medium text-gray-700">Labour Price (£)</label><input type="number" id="editLabourPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.labourPrice || ''}"></div>
-                                <div><label for="editMaterialPrice-${id}" class="block text-sm font-medium text-gray-700">Material Price (£)</label><input type="number" id="editMaterialPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.materialPrice || ''}"></div>
-                            </div>
-                            <div><label for="editDescription-${id}" class="block text-sm font-medium text-gray-700">Description</label><textarea id="editDescription-${id}" rows="3" class="input-field">${job.description || ''}</textarea></div>
+                            <form id="editForm-${id}" class="space-y-4" onsubmit="saveEdit(event, '${id}')">
+                                <div><label for="editAddress-${id}" class="block text-sm font-medium text-gray-700">Job Address</label><input type="text" id="editAddress-${id}" required class="input-field" value="${job.address}"></div>
+                                <div class="mb-4"><label for="editDateCompleted-${id}" class="block text-sm font-medium text-gray-700">Date Completed</label><input type="date" id="editDateCompleted-${id}" class="input-field" value="${job.dateCompleted || ''}"></div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div><label for="editLabourPrice-${id}" class="block text-sm font-medium text-gray-700">Labour Price (£)</label><input type="number" id="editLabourPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.labourPrice || ''}"></div>
+                                    <div><label for="editMaterialPrice-${id}" class="block text-sm font-medium text-gray-700">Material Price (£)</label><input type="number" id="editMaterialPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.materialPrice || ''}"></div>
+                                </div>
+                                <div><label for="editDescription-${id}" class="block text-sm font-medium text-gray-700">Description</label><textarea id="editDescription-${id}" rows="3" class="input-field">${job.description || ''}</textarea></div>
 
-                            <div class="space-y-2"><span class="block text-sm font-medium text-gray-700">Job Type:</span>
-                                <div class="flex space-x-6">
-                                    <div class="flex items-center">
-                                        <input id="editIsHackney-${id}" type="radio" name="editJobType-${id}" value="hackney" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'hackney' ? 'checked' : ''} onclick="handleRadioClick(event)">
-                                        <label for="editIsHackney-${id}" class="ml-2 block text-sm font-medium text-gray-700">Hackney</label>
-                                    </div>
-                                    <div class="flex items-center">
-                                        <input id="editIsPeabody-${id}" type="radio" name="editJobType-${id}" value="peabody" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'peabody' ? 'checked' : ''} onclick="handleRadioClick(event)">
-                                        <label for="editIsPeabody-${id}" class="ml-2 block text-sm font-medium text-gray-700">Peabody</label>
+                                <div class="space-y-2"><span class="block text-sm font-medium text-gray-700">Job Type:</span>
+                                    <div class="flex space-x-6">
+                                        <div class="flex items-center">
+                                            <input id="editIsHackney-${id}" type="radio" name="editJobType-${id}" value="hackney" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'hackney' ? 'checked' : ''} onclick="handleRadioClick(event)">
+                                            <label for="editIsHackney-${id}" class="ml-2 block text-sm font-medium text-gray-700">Hackney</label>
+                                        </div>
+                                        <div class="flex items-center">
+                                            <input id="editIsPeabody-${id}" type="radio" name="editJobType-${id}" value="peabody" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'peabody' ? 'checked' : ''} onclick="handleRadioClick(event)">
+                                            <label for="editIsPeabody-${id}" class="ml-2 block text-sm font-medium text-gray-700">Peabody</label>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
 
-                            <div class="flex space-x-3 pt-2">
-                                <button type="submit" class="flex-1 bg-green-600 text-white font-bold py-2 rounded-lg shadow-md hover:bg-green-700 transition">Save Changes</button>
-                                <button type="button" onclick="renderJobs()" class="flex-1 bg-gray-300 text-gray-800 font-bold py-2 rounded-lg shadow-md hover:bg-gray-400 transition">Cancel</button>
-                            </div>
-                        </form>`;
+                                <div class="flex space-x-3 pt-2">
+                                    <button type="submit" class="flex-1 bg-green-600 text-white font-bold py-2 rounded-lg shadow-md hover:bg-green-700 transition">Save Changes</button>
+                                    <button type="button" onclick="renderJobs()" class="flex-1 bg-gray-300 text-gray-800 font-bold py-2 rounded-lg shadow-md hover:bg-gray-400 transition">Cancel</button>
+                                </div>
+                            </form>`;
 
             cardElement.innerHTML = editFormHtml;
 
-            // Set initial custom radio button state
             const hackneyInput = document.getElementById(`editIsHackney-${id}`);
             const peabodyInput = document.getElementById(`editIsPeabody-${id}`);
             if (hackneyInput) hackneyInput.wasCheckedBeforeClick = hackneyInput.checked;
             if (peabodyInput) peabodyInput.wasCheckedBeforeClick = peabodyInput.checked;
         }
 
-        /**
-         * Saves the changes made in the edit form back to Firestore.
-         */
         window.saveEdit = async function (event, id) {
             event.preventDefault();
             if (!isAuthReady || !userId) return;
 
             const form = document.getElementById(`editForm-${id}`);
-            // Safely get the selected job type, defaulting to an empty string if nothing is checked
             const selectedJobType = document.querySelector(`input[name="editJobType-${id}"]:checked`)?.value || '';
 
             const updatedData = {
                 title: form.elements[`editAddress-${id}`].value.trim(),
                 address: form.elements[`editAddress-${id}`].value.trim(),
                 description: form.elements[`editDescription-${id}`].value.trim(),
-                // Store values as numbers (or 0)
                 labourPrice: parseFloat(form.elements[`editLabourPrice-${id}`].value) || 0,
                 materialPrice: parseFloat(form.elements[`editMaterialPrice-${id}`].value) || 0,
                 isHackney: selectedJobType === 'hackney',
@@ -526,32 +486,25 @@
             }
         }
 
-        /**
-         * Helper function to encapsulate the SheetJS generation logic.
-         * @param {Array<Object>} jobs - The list of jobs to export.
-         * @param {string} type - 'Peabody' or 'Other' for filename generation.
-         * @param {string} weekStartDate - The YYYY-MM-DD date of the week to export.
-         */
+        // ==========================================================
+        // SECTION 6: XLSX EXPORT LOGIC (SheetJS)
+        // ==========================================================
+
         const generateXLSX = function (jobs, type, weekStartDate) {
             if (jobs.length === 0) return;
 
-            // 1. Map data to the new 5-column structure
             const excelData = jobs.map(job => {
                 const costs = calculateNetJobCost(job);
-
-                // Use the raw number values for Labour and Materials
                 return {
                     Address: job.title,
                     Code: "",
-                    Labour: costs.grossLabour, // Raw number for proper Excel calculation
-                    Materials: costs.material,  // Raw number for proper Excel calculation
+                    Labour: costs.grossLabour,
+                    Materials: costs.material,
                     Description: job.description
                 };
             });
 
             const headers = ["Address", "Code", "Labour", "Materials", "Description"];
-
-            // 2. Define the worksheet and workbook
             const worksheet = XLSX.utils.json_to_sheet(excelData, {
                 header: headers,
                 skipHeader: false
@@ -565,29 +518,19 @@
             let range = XLSX.utils.decode_range(worksheet['!ref']);
             const currencyFormat = '£#,##0.00';
 
-            // Utility to safely add a text cell
             const setCellText = (ws, c, r, text) => {
                 const cellRef = XLSX.utils.encode_cell({ c: c, r: r });
-                ws[cellRef] = { v: text, t: 's' }; // t: 's' for string (text)
+                ws[cellRef] = { v: text, t: 's' };
             };
 
-            // 3. Apply Currency Formatting to Data Rows
             for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-                // Column C (Labour) - column index 2
                 const labourCellRef = XLSX.utils.encode_cell({ c: 2, r: R });
-                if (worksheet[labourCellRef]) {
-                    worksheet[labourCellRef].z = currencyFormat;
-                }
+                if (worksheet[labourCellRef]) worksheet[labourCellRef].z = currencyFormat;
 
-                // Column D (Materials) - column index 3
                 const materialCellRef = XLSX.utils.encode_cell({ c: 3, r: R });
-                if (worksheet[materialCellRef]) {
-                    worksheet[materialCellRef].z = currencyFormat;
-                }
+                if (worksheet[materialCellRef]) worksheet[materialCellRef].z = currencyFormat;
             }
 
-
-            // 4. Add Total Labour, Total Materials, and Final Total Footer
 
             const lastExcelDataRow = range.e.r + 1;
             const titleRowIndex = range.e.r + 2;
@@ -595,39 +538,29 @@
 
             const sumRangeLabour = `C2:C${lastExcelDataRow}`;
             const sumRangeMaterials = `D2:D${lastExcelDataRow}`;
-            const excelValueRowNumber = valueRowIndex + 1; // Excel rows are 1-indexed
+            const excelValueRowNumber = valueRowIndex + 1;
 
-            // 4a. Set Titles in the Title Row (C, D, and E)
-            setCellText(worksheet, 2, titleRowIndex, 'Total Labour');      // C (Labour) Title Row
-            setCellText(worksheet, 3, titleRowIndex, 'Total Materials');  // D (Materials) Title Row
-            setCellText(worksheet, 4, titleRowIndex, 'Final Total');      // E (Description) Title Row
+            setCellText(worksheet, 2, titleRowIndex, 'Total Labour');
+            setCellText(worksheet, 3, titleRowIndex, 'Total Materials');
+            setCellText(worksheet, 4, titleRowIndex, 'Final Total');
+            setCellText(worksheet, 0, valueRowIndex, 'GRAND TOTALS');
 
-            // 4b. Set the 'GRAND TOTALS' Label in the Value Row (A)
-            setCellText(worksheet, 0, valueRowIndex, 'GRAND TOTALS');    // A (Address) Value Row
-
-            // 4c. Set the Total Labour Value (Formula) in Column C
             const labourValueRef = XLSX.utils.encode_cell({ c: 2, r: valueRowIndex });
             worksheet[labourValueRef] = { t: 'n', f: `SUM(${sumRangeLabour})`, z: currencyFormat };
 
-            // 4d. Set the Total Materials Value (Formula) in Column D
             const materialValueRef = XLSX.utils.encode_cell({ c: 3, r: valueRowIndex });
             worksheet[materialValueRef] = { t: 'n', f: `SUM(${sumRangeMaterials})`, z: currencyFormat };
 
-            // 4e. Set the Final Total Value (Formula) in Column E (Description)
             const finalTotalValueRef = XLSX.utils.encode_cell({ c: 4, r: valueRowIndex });
             const finalTotalFormula = `C${excelValueRowNumber}+D${excelValueRowNumber}`;
             worksheet[finalTotalValueRef] = { t: 'n', f: finalTotalFormula, z: currencyFormat };
 
-            // Update the worksheet's bounding box to include the new footer rows
             range.e.r = valueRowIndex;
             worksheet['!ref'] = XLSX.utils.encode_range(range);
 
-
-            // 5. Auto-size Column Logic
             const wscols = headers.map(header => {
                 let maxLen = header.length;
                 const colIndex = headers.indexOf(header);
-
                 for (let R = range.s.r + 1; R <= range.e.r; ++R) {
                     const cellRef = XLSX.utils.encode_cell({ c: colIndex, r: R });
                     const cell = worksheet[cellRef];
@@ -652,29 +585,132 @@
                         }
                     }
                 }
-
                 return { wch: Math.min(maxLen + 2, 50) };
             });
 
             worksheet['!cols'] = wscols;
 
-            // 6. Trigger download
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, `${type} Report`);
 
             const weekTitleForFile = formatWeekRange(weekStartDate);
             const safeWeekTitle = weekTitleForFile.replace(/[^a-zA-Z0-9]/g, '_');
 
-            // Filename includes the job type (Peabody or Other)
             XLSX.writeFile(workbook, `Job_Report_${type}_${safeWeekTitle}.xlsx`);
         };
 
 
+        // ==========================================================
+        // SECTION 7: DOCX GENERATION LOGIC (Docxtemplater) (MODIFIED FOR SINGLE TEMPLATE)
+        // ==========================================================
+
         /**
-         * Generates and downloads two separate XLSX files: one for Peabody jobs and one for Other jobs.
-         * @param {string} targetWeekStartDate - The YYYY-MM-DD date of the Monday for the week to export.
+         * Aggregates a specific array of jobs into the structure needed for the DOCX templates.
          */
-        window.exportToXLSX = function (targetWeekStartDate) {
+        function aggregateInvoiceData(jobsToAggregate) {
+            let totalLabourGross = 0;
+            let totalMaterials = 0;
+
+            const today = new Date();
+            const dateString = today.toLocaleDateString('en-GB', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '');
+            const invoiceNumber = `INV-${dateString}-${String(Date.now()).slice(-4)}`;
+
+            jobsToAggregate.forEach(job => {
+                const costs = calculateNetJobCost(job);
+                totalLabourGross += costs.grossLabour;
+                totalMaterials += costs.material;
+            });
+
+            const totalLabourNet = totalLabourGross * LABOUR_AFTER_TAX_MULTIPLIER;
+            const totalInvoiceAmount = totalLabourNet + totalMaterials;
+            const taxAmount = totalLabourGross * LABOUR_TAX_RATE;
+
+            // This returns the data object for replacement in the DOCX file.
+            return {
+                INVOICE_NUMBER: invoiceNumber,
+                INVOICE_DATE: today.toLocaleDateString('en-GB'),
+                TOTAL: totalLabourGross.toFixed(2),
+                LABOUR: totalLabourNet.toFixed(2),
+                MATERIALS: totalMaterials.toFixed(2),
+                TAX: taxAmount.toFixed(2), // CRITICAL: Template tag must be {TAX}
+                AFTER_TAX: totalInvoiceAmount.toFixed(2), // Final Amount Due
+            };
+        }
+
+        function getClientData(clientKey) {
+            const data = CLIENT_DATA[clientKey];
+            return {
+                CLIENT_NAME_FULL: data.name,
+                CLIENT_ADDRESS: data.address
+            };
+        }
+
+
+        // Helper function to fetch the DOCX template as an ArrayBuffer
+        async function loadTemplateBinary(filename) {
+            const response = await fetch(filename);
+            if (!response.ok) {
+                throw new Error(`Failed to load template: ${filename}. Status: ${response.status}`);
+            }
+            return response.arrayBuffer();
+        }
+
+        /**
+         * Generates and downloads a DOCX invoice based on the client and job data.
+         * Now uses a single template: ClientInvoiceBlank.docx
+         */
+        window.generateDocxInvoice = async function (clientKey, data) {
+            const templateFileName = 'ClientInvoiceBlank.docx';
+
+            try {
+                const clientInfo = getClientData(clientKey);
+
+                // dataToInject contains all financial and client-specific tags
+                const dataToInject = {
+                    ...data,
+                    ...clientInfo
+                };
+
+                const outputFileName = `${clientKey}_Invoice_${dataToInject.INVOICE_NUMBER}.docx`;
+
+                const content = await loadTemplateBinary(templateFileName);
+
+                const zip = new PizZip(content);
+                const doc = new Docxtemplater(zip, {
+                    paragraphLoop: true,
+                    linebreaks: true,
+                });
+
+                doc.render(dataToInject);
+
+                const out = doc.getZip().generate({
+                    type: "blob",
+                    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    compression: "DEFLATE",
+                });
+
+                saveAs(out, outputFileName);
+
+                console.log(`Successfully generated: ${outputFileName}`);
+                return true;
+
+            } catch (error) {
+                console.error(`DOCX Generation Error for ${clientKey}:`, error);
+                let errorMessage = `Failed to generate ${clientKey} invoice: ${error.message}`;
+                if (error.properties) {
+                    errorMessage = `Docxtemplater Error in template. Tag: ${error.properties.tag}, Part: ${error.properties.part}. CRITICAL: Check your Word template for hidden formatting (Content Controls) and spaces in tags.`;
+                }
+                alert(errorMessage);
+                return false;
+            }
+        };
+
+
+        /**
+         * Handles the "Export Week" button click, generating both DOCX invoices for that week
+         * and then performing the XLSX export.
+         */
+        window.exportWeekData = async function (targetWeekStartDate) {
 
             // 1. Filter jobs for the specific week
             const jobsToExport = allJobs.filter(job => getWeekStartDate(job.dateCompleted) === targetWeekStartDate);
@@ -684,43 +720,78 @@
                 return;
             }
 
-            // 2. Split jobs into two categories
+            const weekRange = formatWeekRange(targetWeekStartDate);
+            let docxSuccessCount = 0;
+
             const peabodyJobs = jobsToExport.filter(job => job.isPeabody);
-            // 'Other' includes Hackney and non-Hackney/non-Peabody jobs
-            const otherJobs = jobsToExport.filter(job => !job.isPeabody);
+            const hackneyJobs = jobsToExport.filter(job => job.isHackney);
+            const otherNonClientJobs = jobsToExport.filter(job => !job.isPeabody && !job.isHackney);
 
-            let exportedCount = 0;
+            // 2. FRESHBUILD (Peabody jobs)
+            if (peabodyJobs.length > 0) {
+                const freshbuildData = aggregateInvoiceData(peabodyJobs);
+                if (await window.generateDocxInvoice('FRESHBUILD', freshbuildData)) {
+                    docxSuccessCount++;
+                }
+            } else {
+                console.log('No Peabody jobs found for Freshbuild invoice.');
+            }
 
-            // 3. Export Peabody Jobs
+
+            // 3. SALTASH (Hackney jobs)
+            if (hackneyJobs.length > 0) {
+                const saltashData = aggregateInvoiceData(hackneyJobs);
+                if (await window.generateDocxInvoice('SALTASH', saltashData)) {
+                    docxSuccessCount++;
+                }
+            } else {
+                console.log('No Hackney jobs found for Saltash invoice.');
+            }
+
+
+            // -----------------------------------------------------
+            // --- XLSX Generation ---
+
+            const otherJobsForXLSX = hackneyJobs.concat(otherNonClientJobs);
+
+            let xlsxExportedCount = 0;
+
             if (peabodyJobs.length > 0) {
                 generateXLSX(peabodyJobs, 'Peabody', targetWeekStartDate);
-                exportedCount++;
-            } else {
-                console.log('No Peabody jobs to export for this week.');
+                xlsxExportedCount++;
             }
 
-            // 4. Export Other Jobs
-            if (otherJobs.length > 0) {
-                generateXLSX(otherJobs, 'Other', targetWeekStartDate);
-                exportedCount++;
-            } else {
-                console.log('No Other jobs to export for this week.');
+            if (otherJobsForXLSX.length > 0) {
+                generateXLSX(otherJobsForXLSX, 'Other', targetWeekStartDate);
+                xlsxExportedCount++;
             }
 
-            if (exportedCount > 0) {
-                alert(`Export complete! ${exportedCount} file(s) created for the week of ${targetWeekStartDate}. Check your downloads folder.`);
+            // --- Final Alert ---
+
+            let finalMessage = `Export complete for the week of ${weekRange}.\n\n`;
+
+            if (docxSuccessCount > 0) {
+                finalMessage += `DOCX Invoices Generated: ${docxSuccessCount} file(s). (Freshbuild: Peabody Jobs, Saltash: Hackney Jobs)\n`;
+            } else {
+                finalMessage += `DOCX Invoices: No jobs found for Freshbuild (Peabody) or Saltash (Hackney), or template error occurred.\n`;
             }
+
+            if (xlsxExportedCount > 0) {
+                finalMessage += `XLSX Reports Generated: ${xlsxExportedCount} file(s).`;
+            } else {
+                finalMessage += `XLSX Reports: No jobs found for Peabody or Other report.`;
+            }
+
+            alert(finalMessage);
         };
 
-
         // ==========================================================
-        // SECTION 6: INITIALIZATION
+        // SECTION 8: INITIALIZATION
         // ==========================================================
 
         window.onload = function () {
             initFirebase();
 
-            // Initialize custom property for the creation form radios
             const hackneyCreate = document.getElementById('jobType-hackney');
             const peabodyCreate = document.getElementById('jobType-peabody');
 
@@ -730,75 +801,55 @@
 
     </script>
 </head>
-<body class="bg-gray-100 min-h-screen p-4 sm:p-8 font-sans">
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8">
+        <h1 class="text-3xl font-extrabold text-indigo-700 mb-2">Job Manager & Invoice Generator</h1>
+        <p id="authStatus" class="text-sm text-gray-600 mb-6">Status: Initializing...</p>
 
-    <div class="max-w-7xl mx-auto">
-
-        <nav class="bg-white p-4 rounded-xl shadow-md flex justify-between items-center mb-6">
-            <div class="flex items-center space-x-2">
-                <svg class="w-7 h-7 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
-                <span class="text-xl font-bold text-gray-800">Job Manager (Cloud Shared)</span>
-            </div>
-            <div class="flex items-center space-x-2">
-                <div id="loadingIndicator" class="text-center" style="display:none;">
-                    <svg class="animate-spin h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
+        <div class="bg-white p-6 rounded-xl shadow-2xl mb-8 border-t-4 border-indigo-600">
+            <h2 class="text-2xl font-semibold text-gray-800 mb-4">Add New Job</h2>
+            <form id="addJobForm" onsubmit="addJob(event)" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="jobAddress" class="block text-sm font-medium text-gray-700">Job Address / Title</label>
+                        <input type="text" id="jobAddress" name="jobAddress" required class="input-field">
+                    </div>
+                    <div>
+                        <label for="dateCompleted" class="block text-sm font-medium text-gray-700">Date Completed</label>
+                        <input type="date" id="dateCompleted" name="dateCompleted" class="input-field">
+                    </div>
                 </div>
-                <span id="authStatus" class="text-sm text-gray-600">Initializing...</span>
-            </div>
-        </nav>
-
-        <h1 class="text-3xl font-extrabold text-gray-800 text-center mb-6">Manage Your Jobs</h1>
-
-        <div class="bg-white p-6 rounded-xl shadow-lg border border-indigo-200 mb-8">
-            <h2 class="text-2xl font-semibold text-gray-800 mb-4">Create New Job</h2>
-            <form onsubmit="addJob(event)">
-
-                <div class="mb-4">
-                    <label for="jobAddress" class="block text-sm font-medium text-gray-700">Job Address</label>
-                    <input type="text" id="jobAddress" name="jobAddress" required class="input-field">
-                </div>
-
-                <div class="mb-4">
-                    <label for="dateCompleted" class="block text-sm font-medium text-gray-700">Date Completed (For Weekly Grouping)</label>
-                    <input type="date" id="dateCompleted" name="dateCompleted" class="input-field">
-                </div>
-
-                <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label for="labourPrice" class="block text-sm font-medium text-gray-700">Labour Price (£)</label>
-                        <input type="number" id="labourPrice" name="labourPrice" step="0.01" value="" placeholder="0.00" class="input-field">
+                        <input type="number" id="labourPrice" name="labourPrice" step="0.01" placeholder="0.00" class="input-field" value="">
                     </div>
                     <div>
                         <label for="materialPrice" class="block text-sm font-medium text-gray-700">Material Price (£)</label>
-                        <input type="number" id="materialPrice" name="materialPrice" step="0.01" value="" placeholder="0.00" class="input-field">
+                        <input type="number" id="materialPrice" name="materialPrice" step="0.01" placeholder="0.00" class="input-field" value="">
                     </div>
                 </div>
 
-                <div class="mb-4">
-                    <label for="jobDescription" class="block text-sm font-medium text-gray-700">Description</label>
+                <div>
+                    <label for="jobDescription" class="block text-sm font-medium text-gray-700">Detailed Description</label>
                     <textarea id="jobDescription" name="jobDescription" rows="3" class="input-field"></textarea>
                 </div>
 
-                <div class="mb-6">
-                    <span class="block text-sm font-medium text-gray-700 mb-2">Job Type:</span>
+                <div class="space-y-2">
+                    <span class="block text-sm font-medium text-gray-700">Job Type (Required for invoicing):</span>
                     <div class="flex space-x-6">
                         <div class="flex items-center">
                             <input id="jobType-hackney" type="radio" name="jobType" value="hackney" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" onclick="handleRadioClick(event)">
-                            <label for="jobType-hackney" class="ml-2 block text-sm font-medium text-gray-700">Hackney</label>
+                            <label for="jobType-hackney" class="ml-2 block text-sm font-medium text-gray-700">Hackney (Saltash)</label>
                         </div>
                         <div class="flex items-center">
                             <input id="jobType-peabody" type="radio" name="jobType" value="peabody" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" onclick="handleRadioClick(event)">
-                            <label for="jobType-peabody" class="ml-2 block text-sm font-medium text-gray-700">Peabody</label>
+                            <label for="jobType-peabody" class="ml-2 block text-sm font-medium text-gray-700">Peabody (Freshbuild)</label>
                         </div>
                     </div>
                 </div>
 
-                <button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-lg shadow-md hover:bg-indigo-700 transition duration-200">
-                    Add Job to Cloud
-                </button>
+                <button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 ease-in-out">Add Job</button>
             </form>
         </div>
 
@@ -816,14 +867,12 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            <p class="mt-2 text-indigo-500">Loading jobs from cloud...</p>
+            <p class="text-sm text-indigo-500 mt-2">Loading job data...</p>
         </div>
 
-        <div id="jobList" class="space-y-4">
-            <p class="text-center text-gray-500 py-10">Waiting for data connection...</p>
+        <div id="jobList" class="space-y-6">
         </div>
 
     </div>
-
 </body>
 </html>
