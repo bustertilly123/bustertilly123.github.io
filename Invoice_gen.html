@@ -27,9 +27,9 @@
         }
     </style>
 
-  <script type="module">
+<script type="module">
         // ===============================================
-        // SECTION 0: DOCX & UTILITY IMPORTS
+        // SECTION 0: DOCX & UTILITY IMPORTS (RE-ADDED)
         // ===============================================
         import PizZip from "https://esm.sh/pizzip@3.1.6";
         import Docxtemplater from "https://esm.sh/docxtemplater";
@@ -87,7 +87,7 @@
         const appId = typeof __app_id !== 'undefined' ? __app_id : FIREBASE_CONFIG.projectId || 'default-app-id';
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        // --- NEW CLIENT ADDRESS DATA ---
+        // --- CLIENT ADDRESS DATA (RE-ADDED) ---
         const CLIENT_DATA = {
             FRESHBUILD: {
                 name: 'FRESHBUILD LIMITED',
@@ -487,24 +487,35 @@
         }
 
         // ==========================================================
-        // SECTION 6: XLSX EXPORT LOGIC (SheetJS)
+        // SECTION 6: XLSX EXPORT LOGIC (SheetJS) - NOW WITH JS CALCULATED TOTALS
         // ==========================================================
 
+        /**
+         * Helper function to encapsulate the SheetJS generation logic.
+         * MODIFIED: Calculates all totals in JavaScript and inserts static numbers instead of formulas.
+         * * @param {Array<Object>} jobs - The list of jobs to export.
+         * @param {string} type - 'Peabody' or 'Other' for filename generation.
+         * @param {string} weekStartDate - The YYYY-MM-DD date of the week to export.
+         */
         const generateXLSX = function (jobs, type, weekStartDate) {
             if (jobs.length === 0) return;
 
+            // 1. Map data to the new 5-column structure
             const excelData = jobs.map(job => {
                 const costs = calculateNetJobCost(job);
+
                 return {
                     Address: job.title,
                     Code: "",
-                    Labour: costs.grossLabour,
-                    Materials: costs.material,
+                    Labour: costs.grossLabour, // Raw number for proper Excel calculation
+                    Materials: costs.material,  // Raw number for proper Excel calculation
                     Description: job.description
                 };
             });
 
             const headers = ["Address", "Code", "Labour", "Materials", "Description"];
+
+            // 2. Define the worksheet and workbook
             const worksheet = XLSX.utils.json_to_sheet(excelData, {
                 header: headers,
                 skipHeader: false
@@ -518,71 +529,83 @@
             let range = XLSX.utils.decode_range(worksheet['!ref']);
             const currencyFormat = '£#,##0.00';
 
+            // Utility to safely add a text cell
             const setCellText = (ws, c, r, text) => {
                 const cellRef = XLSX.utils.encode_cell({ c: c, r: r });
-                ws[cellRef] = { v: text, t: 's' };
+                ws[cellRef] = { v: text, t: 's' }; // t: 's' for string (text)
             };
 
-            // Format data rows
+            // NEW: Initialize accumulators
+            let totalLabourSum = 0;
+            let totalMaterialsSum = 0;
+
+            // 3. Apply Currency Formatting to Data Rows AND CALCULATE SUMS
             for (let R = range.s.r + 1; R <= range.e.r; ++R) {
                 const labourCellRef = XLSX.utils.encode_cell({ c: 2, r: R });
-                if (worksheet[labourCellRef]) worksheet[labourCellRef].z = currencyFormat;
+                const labourCell = worksheet[labourCellRef];
+
+                if (labourCell) {
+                    worksheet[labourCellRef].z = currencyFormat;
+                    totalLabourSum += (parseFloat(labourCell.v) || 0); 
+                }
 
                 const materialCellRef = XLSX.utils.encode_cell({ c: 3, r: R });
-                if (worksheet[materialCellRef]) worksheet[materialCellRef].z = currencyFormat;
+                const materialCell = worksheet[materialCellRef];
+
+                if (materialCell) {
+                    worksheet[materialCellRef].z = currencyFormat;
+                    totalMaterialsSum += (parseFloat(materialCell.v) || 0);
+                }
             }
 
-            // --- CRITICAL SUMMARY ROW CREATION ---
-            
-            // Excel row number of the last data row (e.g., if 5 jobs, this is row 6)
-            const lastExcelDataRowNumber = range.e.r + 1; 
 
-            // Row indices (0-indexed) for the new rows
-            const titleRowIndex = range.e.r + 2; 
+            // 4. Add Total Labour, Total Materials, and Final Total Footer
+
+            const titleRowIndex = range.e.r + 2;
             const valueRowIndex = range.e.r + 3;
 
-            // Define the range for the SUM formulas
-            const sumRangeLabour = `C2:C${lastExcelDataRowNumber}`;
-            const sumRangeMaterials = `D2:D${lastExcelDataRowNumber}`;
-            const excelValueRowNumber = valueRowIndex + 1; // Excel row number (1-indexed) for the total values
+            // Calculate final total outside of Excel
+            const finalTotalSum = totalLabourSum + totalMaterialsSum;
 
-            // Write Headers
-            setCellText(worksheet, 2, titleRowIndex, 'Total Labour');
-            setCellText(worksheet, 3, titleRowIndex, 'Total Materials');
-            setCellText(worksheet, 4, titleRowIndex, 'Final Total');
-            setCellText(worksheet, 0, valueRowIndex, 'GRAND TOTALS');
+            // 4a. Set Titles in the Title Row (C, D, and E)
+            setCellText(worksheet, 2, titleRowIndex, 'Total Labour');      
+            setCellText(worksheet, 3, titleRowIndex, 'Total Materials');  
+            setCellText(worksheet, 4, titleRowIndex, 'Final Total');      
 
-            // Write Formulas
+            // 4b. Set the 'GRAND TOTALS' Label in the Value Row (A)
+            setCellText(worksheet, 0, valueRowIndex, 'GRAND TOTALS');    
+
+            // 4c. Set the Total Labour Value (STATIC NUMBER) in Column C
             const labourValueRef = XLSX.utils.encode_cell({ c: 2, r: valueRowIndex });
-            worksheet[labourValueRef] = { t: 'n', f: `SUM(${sumRangeLabour})`, z: currencyFormat };
+            worksheet[labourValueRef] = { t: 'n', v: totalLabourSum, z: currencyFormat }; 
 
+            // 4d. Set the Total Materials Value (STATIC NUMBER) in Column D
             const materialValueRef = XLSX.utils.encode_cell({ c: 3, r: valueRowIndex });
-            worksheet[materialValueRef] = { t: 'n', f: `SUM(${sumRangeMaterials})`, z: currencyFormat };
+            worksheet[materialValueRef] = { t: 'n', v: totalMaterialsSum, z: currencyFormat }; 
 
+            // 4e. Set the Final Total Value (STATIC NUMBER) in Column E (Description)
             const finalTotalValueRef = XLSX.utils.encode_cell({ c: 4, r: valueRowIndex });
-            const finalTotalFormula = `C${excelValueRowNumber}+D${excelValueRowNumber}`;
-            worksheet[finalTotalValueRef] = { t: 'n', f: finalTotalFormula, z: currencyFormat };
-            
-            // CRITICAL: Update sheet range to include the new rows
+            worksheet[finalTotalValueRef] = { t: 'n', v: finalTotalSum, z: currencyFormat }; 
+
+            // Update the worksheet's bounding box to include the new footer rows
             range.e.r = valueRowIndex;
             worksheet['!ref'] = XLSX.utils.encode_range(range);
 
-            // --- END SUMMARY ROW CREATION ---
 
-
+            // 5. Auto-size Column Logic
             const wscols = headers.map(header => {
                 let maxLen = header.length;
                 const colIndex = headers.indexOf(header);
-                 for (let R = range.s.r; R <= range.e.r; ++R) { // Loop from header row (0) to final total row
+
+                for (let R = range.s.r + 1; R <= range.e.r; ++R) {
                     const cellRef = XLSX.utils.encode_cell({ c: colIndex, r: R });
                     const cell = worksheet[cellRef];
 
                     if (cell && cell.v !== null && cell.v !== undefined) {
                         let len = String(cell.v).length;
 
-                        // Give currency columns a fixed width
-                        if (cell.z && cell.z === currencyFormat) {
-                            len = 12; // Adjusted for currency format length
+                        if (cell.z && cell.z === currencyFormat && (header === 'Labour' || header === 'Materials' || header === 'Description')) {
+                            len = 10;
                         } else if (cell.t === 's' && cell.v) {
                             len = cell.v.length;
                         } else if (cell.t === 'n' && cell.w) {
@@ -598,29 +621,27 @@
                         }
                     }
                 }
+
                 return { wch: Math.min(maxLen + 2, 50) };
             });
 
             worksheet['!cols'] = wscols;
 
+            // 6. Trigger download
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, `${type} Report`);
 
             const weekTitleForFile = formatWeekRange(weekStartDate);
             const safeWeekTitle = weekTitleForFile.replace(/[^a-zA-Z0-9]/g, '_');
 
-            // CRITICAL FIX: Ensure file is saved as standard editable XLSX
             XLSX.writeFile(workbook, `Job_Report_${type}_${safeWeekTitle}.xlsx`, { bookType: 'xlsx', type: 'base64' });
         };
 
 
         // ==========================================================
-        // SECTION 7: DOCX GENERATION LOGIC (Docxtemplater) (MODIFIED FOR SINGLE TEMPLATE)
+        // SECTION 7: DOCX GENERATION LOGIC (RE-ADDED)
         // ==========================================================
 
-        /**
-         * Aggregates a specific array of jobs into the structure needed for the DOCX templates.
-         */
         function aggregateInvoiceData(jobsToAggregate) {
             let totalLabourGross = 0;
             let totalMaterials = 0;
@@ -639,15 +660,14 @@
             const totalInvoiceAmount = totalLabourNet + totalMaterials;
             const taxAmount = totalLabourGross * LABOUR_TAX_RATE;
 
-            // This returns the data object for replacement in the DOCX file.
             return {
                 INVOICE_NUMBER: invoiceNumber,
                 INVOICE_DATE: today.toLocaleDateString('en-GB'),
                 TOTAL: totalLabourGross.toFixed(2),
                 LABOUR: totalLabourNet.toFixed(2),
                 MATERIALS: totalMaterials.toFixed(2),
-                TAX: taxAmount.toFixed(2), // CRITICAL: Template tag must be {TAX}
-                AFTER_TAX: totalInvoiceAmount.toFixed(2), // Final Amount Due
+                TAX: taxAmount.toFixed(2), 
+                AFTER_TAX: totalInvoiceAmount.toFixed(2),
             };
         }
 
@@ -659,8 +679,6 @@
             };
         }
 
-
-        // Helper function to fetch the DOCX template as an ArrayBuffer
         async function loadTemplateBinary(filename) {
             const response = await fetch(filename);
             if (!response.ok) {
@@ -669,24 +687,21 @@
             return response.arrayBuffer();
         }
 
-        /**
-         * Generates and downloads a DOCX invoice based on the client and job data.
-         * Now uses a single template: ClientInvoiceBlank.docx
-         */
         window.generateDocxInvoice = async function (clientKey, data) {
-            const templateFileName = 'ClientInvoiceBlank.docx'; 
+            const templateFileName = `${clientKey}Blank.docx`; // Uses the uploaded filenames (FreshbuildBlank.docx, SaltashBlank.docx)
             
             try {
                 const clientInfo = getClientData(clientKey);
                 
                 const dataToInject = { 
                     ...data,
-                    ...clientInfo // Adds CLIENT_NAME_FULL and CLIENT_ADDRESS
+                    ...clientInfo
                 };
                 
                 const outputFileName = `${clientKey}_Invoice_${dataToInject.INVOICE_NUMBER}.docx`;
 
-                const content = await loadTemplateBinary(templateFileName);
+                // IMPORTANT: The template file names must exactly match the ones loaded
+                const content = await loadTemplateBinary(templateFileName); 
                 
                 const zip = new PizZip(content);
                 const doc = new Docxtemplater(zip, {
@@ -735,17 +750,18 @@
 
             const weekRange = formatWeekRange(targetWeekStartDate);
             let docxSuccessCount = 0;
+            let xlsxExportedCount = 0;
 
             // --- DOCX Job Splitting & Generation ---
             
             const peabodyJobs = jobsToExport.filter(job => job.isPeabody);
             const hackneyJobs = jobsToExport.filter(job => job.isHackney);
-            const otherNonClientJobs = jobsToExport.filter(job => !job.isPeabody && !job.isHackney);
+            const otherNonClientJobs = jobsToExport.filter(job => !job.isPeabody && !job.isHackney); // Used only for XLSX 'Other' report
 
             // 2. FRESHBUILD (Peabody jobs)
             if (peabodyJobs.length > 0) {
                 const freshbuildData = aggregateInvoiceData(peabodyJobs);
-                if (await window.generateDocxInvoice('FRESHBUILD', freshbuildData)) {
+                if (await window.generateDocxInvoice('Freshbuild', freshbuildData)) {
                     docxSuccessCount++;
                 }
             } else {
@@ -756,7 +772,7 @@
             // 3. SALTASH (Hackney jobs)
             if (hackneyJobs.length > 0) {
                 const saltashData = aggregateInvoiceData(hackneyJobs);
-                if (await window.generateDocxInvoice('SALTASH', saltashData)) {
+                if (await window.generateDocxInvoice('Saltash', saltashData)) {
                     docxSuccessCount++;
                 }
             } else {
@@ -767,9 +783,8 @@
             // -----------------------------------------------------
             // --- XLSX Generation ---
 
+            // 'Other' report includes Hackney jobs and any other non-Peabody jobs
             const otherJobsForXLSX = hackneyJobs.concat(otherNonClientJobs);
-
-            let xlsxExportedCount = 0;
 
             if (peabodyJobs.length > 0) {
                 generateXLSX(peabodyJobs, 'Peabody', targetWeekStartDate);
@@ -792,13 +807,14 @@
             }
             
             if (xlsxExportedCount > 0) {
-                 finalMessage += `XLSX Reports Generated: ${xlsxExportedCount} file(s).`;
+                 finalMessage += `XLSX Reports Generated: ${xlsxExportedCount} file(s). (Totals are calculated in the code to prevent Protected View.)`;
             } else {
                  finalMessage += `XLSX Reports: No jobs found for Peabody or Other report.`;
             }
 
             alert(finalMessage);
         };
+
 
         // ==========================================================
         // SECTION 8: INITIALIZATION
