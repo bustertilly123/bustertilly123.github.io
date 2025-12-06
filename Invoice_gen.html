@@ -29,7 +29,7 @@
 
 <script type="module">
         // ===============================================
-        // SECTION 0: DOCX & UTILITY IMPORTS (RE-ADDED)
+        // SECTION 0: DOCX & UTILITY IMPORTS 
         // ===============================================
         import PizZip from "https://esm.sh/pizzip@3.1.6";
         import Docxtemplater from "https://esm.sh/docxtemplater";
@@ -88,6 +88,7 @@
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         // --- CLIENT ADDRESS DATA (RE-ADDED) ---
+        // *** KEYS ARE UPPERCASE ***
         const CLIENT_DATA = {
             FRESHBUILD: {
                 name: 'FRESHBUILD LIMITED',
@@ -487,35 +488,26 @@
         }
 
         // ==========================================================
-        // SECTION 6: XLSX EXPORT LOGIC (SheetJS) - NOW WITH JS CALCULATED TOTALS
+        // SECTION 6: XLSX EXPORT LOGIC (SheetJS)
         // ==========================================================
 
-        /**
-         * Helper function to encapsulate the SheetJS generation logic.
-         * MODIFIED: Calculates all totals in JavaScript and inserts static numbers instead of formulas.
-         * * @param {Array<Object>} jobs - The list of jobs to export.
-         * @param {string} type - 'Peabody' or 'Other' for filename generation.
-         * @param {string} weekStartDate - The YYYY-MM-DD date of the week to export.
-         */
         const generateXLSX = function (jobs, type, weekStartDate) {
             if (jobs.length === 0) return;
 
-            // 1. Map data to the new 5-column structure
             const excelData = jobs.map(job => {
                 const costs = calculateNetJobCost(job);
 
                 return {
                     Address: job.title,
                     Code: "",
-                    Labour: costs.grossLabour, // Raw number for proper Excel calculation
-                    Materials: costs.material,  // Raw number for proper Excel calculation
+                    Labour: costs.grossLabour, 
+                    Materials: costs.material,  
                     Description: job.description
                 };
             });
 
             const headers = ["Address", "Code", "Labour", "Materials", "Description"];
 
-            // 2. Define the worksheet and workbook
             const worksheet = XLSX.utils.json_to_sheet(excelData, {
                 header: headers,
                 skipHeader: false
@@ -529,17 +521,14 @@
             let range = XLSX.utils.decode_range(worksheet['!ref']);
             const currencyFormat = '£#,##0.00';
 
-            // Utility to safely add a text cell
             const setCellText = (ws, c, r, text) => {
                 const cellRef = XLSX.utils.encode_cell({ c: c, r: r });
-                ws[cellRef] = { v: text, t: 's' }; // t: 's' for string (text)
+                ws[cellRef] = { v: text, t: 's' };
             };
 
-            // NEW: Initialize accumulators
             let totalLabourSum = 0;
             let totalMaterialsSum = 0;
 
-            // 3. Apply Currency Formatting to Data Rows AND CALCULATE SUMS
             for (let R = range.s.r + 1; R <= range.e.r; ++R) {
                 const labourCellRef = XLSX.utils.encode_cell({ c: 2, r: R });
                 const labourCell = worksheet[labourCellRef];
@@ -559,40 +548,30 @@
             }
 
 
-            // 4. Add Total Labour, Total Materials, and Final Total Footer
-
             const titleRowIndex = range.e.r + 2;
             const valueRowIndex = range.e.r + 3;
 
-            // Calculate final total outside of Excel
             const finalTotalSum = totalLabourSum + totalMaterialsSum;
 
-            // 4a. Set Titles in the Title Row (C, D, and E)
             setCellText(worksheet, 2, titleRowIndex, 'Total Labour');      
             setCellText(worksheet, 3, titleRowIndex, 'Total Materials');  
             setCellText(worksheet, 4, titleRowIndex, 'Final Total');      
 
-            // 4b. Set the 'GRAND TOTALS' Label in the Value Row (A)
             setCellText(worksheet, 0, valueRowIndex, 'GRAND TOTALS');    
 
-            // 4c. Set the Total Labour Value (STATIC NUMBER) in Column C
             const labourValueRef = XLSX.utils.encode_cell({ c: 2, r: valueRowIndex });
             worksheet[labourValueRef] = { t: 'n', v: totalLabourSum, z: currencyFormat }; 
 
-            // 4d. Set the Total Materials Value (STATIC NUMBER) in Column D
             const materialValueRef = XLSX.utils.encode_cell({ c: 3, r: valueRowIndex });
             worksheet[materialValueRef] = { t: 'n', v: totalMaterialsSum, z: currencyFormat }; 
 
-            // 4e. Set the Final Total Value (STATIC NUMBER) in Column E (Description)
             const finalTotalValueRef = XLSX.utils.encode_cell({ c: 4, r: valueRowIndex });
             worksheet[finalTotalValueRef] = { t: 'n', v: finalTotalSum, z: currencyFormat }; 
 
-            // Update the worksheet's bounding box to include the new footer rows
             range.e.r = valueRowIndex;
             worksheet['!ref'] = XLSX.utils.encode_range(range);
 
 
-            // 5. Auto-size Column Logic
             const wscols = headers.map(header => {
                 let maxLen = header.length;
                 const colIndex = headers.indexOf(header);
@@ -627,7 +606,6 @@
 
             worksheet['!cols'] = wscols;
 
-            // 6. Trigger download
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, `${type} Report`);
 
@@ -639,7 +617,7 @@
 
 
         // ==========================================================
-        // SECTION 7: DOCX GENERATION LOGIC (RE-ADDED)
+        // SECTION 7: DOCX GENERATION LOGIC
         // ==========================================================
 
         function aggregateInvoiceData(jobsToAggregate) {
@@ -671,8 +649,13 @@
             };
         }
 
+        // This function retrieves the client data using the uppercase key
         function getClientData(clientKey) {
+            // This is where the error occurs if clientKey is not a valid key in CLIENT_DATA
             const data = CLIENT_DATA[clientKey];
+            if (!data) {
+                throw new Error(`Client data not found for key: ${clientKey}`);
+            }
             return {
                 CLIENT_NAME_FULL: data.name,
                 CLIENT_ADDRESS: data.address
@@ -688,19 +671,20 @@
         }
 
         window.generateDocxInvoice = async function (clientKey, data) {
-            const templateFileName = `${clientKey}Blank.docx`; // Uses the uploaded filenames (FreshbuildBlank.docx, SaltashBlank.docx)
+            // Template file names use Title Case (e.g., 'FreshbuildBlank.docx')
+            const templateFileName = `${clientKey.charAt(0).toUpperCase() + clientKey.slice(1).toLowerCase()}Blank.docx`; 
             
             try {
-                const clientInfo = getClientData(clientKey);
+                // Pass the uppercase key to getClientData
+                const clientInfo = getClientData(clientKey.toUpperCase()); // <--- PASSING UPPERCASE KEY HERE
                 
                 const dataToInject = { 
                     ...data,
                     ...clientInfo
                 };
                 
-                const outputFileName = `${clientKey}_Invoice_${dataToInject.INVOICE_NUMBER}.docx`;
+                const outputFileName = `${clientKey.charAt(0).toUpperCase() + clientKey.slice(1).toLowerCase()}_Invoice_${dataToInject.INVOICE_NUMBER}.docx`;
 
-                // IMPORTANT: The template file names must exactly match the ones loaded
                 const content = await loadTemplateBinary(templateFileName); 
                 
                 const zip = new PizZip(content);
@@ -727,6 +711,8 @@
                 let errorMessage = `Failed to generate ${clientKey} invoice: ${error.message}`;
                 if (error.properties) {
                      errorMessage = `Docxtemplater Error in template. Tag: ${error.properties.tag}, Part: ${error.properties.part}. CRITICAL: Check your Word template for hidden formatting (Content Controls) and spaces in tags.`;
+                } else if (error.message.includes("Client data not found")) {
+                     errorMessage = `CRITICAL ERROR: Client key mismatch. Ensure client data object keys are consistent. Error: ${error.message}`;
                 }
                 alert(errorMessage);
                 return false; 
@@ -740,7 +726,6 @@
          */
         window.exportWeekData = async function (targetWeekStartDate) {
 
-            // 1. Filter jobs for the specific week
             const jobsToExport = allJobs.filter(job => getWeekStartDate(job.dateCompleted) === targetWeekStartDate);
 
             if (jobsToExport.length === 0) {
@@ -752,16 +737,15 @@
             let docxSuccessCount = 0;
             let xlsxExportedCount = 0;
 
-            // --- DOCX Job Splitting & Generation ---
-            
             const peabodyJobs = jobsToExport.filter(job => job.isPeabody);
             const hackneyJobs = jobsToExport.filter(job => job.isHackney);
-            const otherNonClientJobs = jobsToExport.filter(job => !job.isPeabody && !job.isHackney); // Used only for XLSX 'Other' report
+            const otherNonClientJobs = jobsToExport.filter(job => !job.isPeabody && !job.isHackney); 
 
             // 2. FRESHBUILD (Peabody jobs)
             if (peabodyJobs.length > 0) {
                 const freshbuildData = aggregateInvoiceData(peabodyJobs);
-                if (await window.generateDocxInvoice('Freshbuild', freshbuildData)) {
+                // *** FIX: Pass 'Freshbuild' to generateDocxInvoice. Internally it handles the case logic. ***
+                if (await window.generateDocxInvoice('Freshbuild', freshbuildData)) { 
                     docxSuccessCount++;
                 }
             } else {
@@ -772,6 +756,7 @@
             // 3. SALTASH (Hackney jobs)
             if (hackneyJobs.length > 0) {
                 const saltashData = aggregateInvoiceData(hackneyJobs);
+                // *** FIX: Pass 'Saltash' to generateDocxInvoice. Internally it handles the case logic. ***
                 if (await window.generateDocxInvoice('Saltash', saltashData)) {
                     docxSuccessCount++;
                 }
@@ -783,7 +768,6 @@
             // -----------------------------------------------------
             // --- XLSX Generation ---
 
-            // 'Other' report includes Hackney jobs and any other non-Peabody jobs
             const otherJobsForXLSX = hackneyJobs.concat(otherNonClientJobs);
 
             if (peabodyJobs.length > 0) {
