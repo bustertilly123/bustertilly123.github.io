@@ -63,9 +63,9 @@
         let isAuthReady = false;
 
         // --- INVOICE NUMBERING CONFIGURATION ---
-        // CRITICAL: You must manually update the 'saltashLastMinor' and 'freshbuildLastMinor'
-        // values in this file after a successful weekly export to persist the count.
-        const INVOICE_MAJOR_NUMBER = 25; // The '25' part in 25.XX or FB_25.XX
+        // CRITICAL: You must manually update these values in this file after a successful
+        // weekly export, and manually reset the Major Number and minors on April 1st.
+        let INVOICE_MAJOR_NUMBER = 25; // The '25' part in 25.XX or FB_25.XX
         let saltashLastMinor = 28;       // Last minor number used for Saltash (25.28). Next will be 29.
         let freshbuildLastMinor = 21;    // Last minor number used for Freshbuild (FB_25.21). Next will be 22.
         // ----------------------------------------
@@ -251,6 +251,37 @@
             }
         };
 
+        /**
+         * Checks the current date to determine if a financial year reset is needed.
+         * The financial year starts on April 1st.
+         * @param {number} currentMajorNumber The current major invoice number (e.g., 25).
+         * @returns {number} The major invoice number to use.
+         */
+        function getMajorInvoiceNumber(currentMajorNumber) {
+            const now = new Date();
+            const currentMonth = now.getMonth(); // 0 (Jan) to 11 (Dec)
+            const currentYear = now.getFullYear();
+
+            // Expected major number calculation:
+            // If it's Jan, Feb, Mar (0, 1, 2), the financial year is based on the previous calendar year (e.g., Jan 2026 is FY 25-26).
+            // If it's April to Dec (3-11), the financial year is based on the current calendar year (e.g., April 2026 is FY 26-27).
+
+            let expectedMajorNumber;
+            if (currentMonth < 3) { // Jan, Feb, Mar
+                expectedMajorNumber = (currentYear - 1) % 100;
+            } else { // Apr to Dec
+                expectedMajorNumber = currentYear % 100;
+            }
+
+            // Use the expected number if it's greater than the currently saved number.
+            if (currentMajorNumber < expectedMajorNumber) {
+                console.warn(`Financial year reset detected! Major number advancing from ${currentMajorNumber} to ${expectedMajorNumber}. Minor numbers will reset to .01.`);
+                return expectedMajorNumber;
+            }
+
+            return currentMajorNumber;
+        }
+
         // ==========================================================
         // SECTION 4: RENDERING & DISPLAY LOGIC
         // ==========================================================
@@ -329,27 +360,56 @@
                 return new Date(b) - new Date(a);
             });
 
+            // Re-calculate the current major number based on the date check
+            const currentMajor = getMajorInvoiceNumber(INVOICE_MAJOR_NUMBER);
+            const minorResetNeeded = currentMajor !== INVOICE_MAJOR_NUMBER;
+
             sortedGroupKeys.forEach(weekStartDate => {
                 const weekJobs = groupedJobs[weekStartDate].sort((a, b) => b.timestamp - a.timestamp);
                 const weekTitle = formatWeekRange(weekStartDate);
 
-                const totalWeekCost = weekJobs.reduce((sum, job) => sum + calculateNetJobCost(job).totalNet, 0);
+                const peabodyJobs = weekJobs.filter(job => job.isPeabody);
+                const saltashJobs = weekJobs.filter(job => !job.isPeabody); // Jobs that are NOT Peabody go to Saltash
+                const hackneyJobs = weekJobs.filter(job => job.isHackney); // Kept for the job card display, not for totals
+
+                // --- Calculate Split Totals ---
+                const freshbuildTotal = peabodyJobs.reduce((sum, job) => sum + calculateNetJobCost(job).totalNet, 0);
+                const saltashTotal = saltashJobs.reduce((sum, job) => sum + calculateNetJobCost(job).totalNet, 0);
+                const totalWeekCost = freshbuildTotal + saltashTotal; // Total is just the sum of the two client totals
+
+                let totalDisplay = `<span class="text-xl font-bold ml-4">Total: ${formatCurrency(totalWeekCost)}</span>`;
+
+                let splitTotals = [];
+                if (freshbuildTotal > 0) {
+                    splitTotals.push(`Freshbuild: ${formatCurrency(freshbuildTotal)}`);
+                }
+                if (saltashTotal > 0) {
+                    splitTotals.push(`Saltash: ${formatCurrency(saltashTotal)}`);
+                }
+
+                let splitTotalsDisplay = '';
+                if (splitTotals.length > 0) {
+                    splitTotalsDisplay = `<span class="text-sm border-l border-indigo-500 pl-4 ml-4">${splitTotals.join(' | ')}</span>`;
+                }
+                // --- End Split Totals Calculation ---
+
 
                 // --- Calculate Next Invoice Numbers for Display ---
-                const peabodyJobs = weekJobs.filter(job => job.isPeabody);
-                const hackneyJobs = weekJobs.filter(job => job.isHackney);
-
                 let invoiceParts = [];
+                // Reset minor numbers for display if major change is needed
+                const displaySaltashMinor = minorResetNeeded ? 0 : saltashLastMinor;
+                const displayFreshbuildMinor = minorResetNeeded ? 0 : freshbuildLastMinor;
+
 
                 if (peabodyJobs.length > 0) {
-                    const minor = freshbuildLastMinor + 1;
-                    const number = `FB_${INVOICE_MAJOR_NUMBER}.${String(minor).padStart(2, '0')}`;
+                    const minor = displayFreshbuildMinor + 1;
+                    const number = `FB_${currentMajor}.${String(minor).padStart(2, '0')}`;
                     invoiceParts.push(`Freshbuild: ${number}`);
                 }
 
-                if (hackneyJobs.length > 0) {
-                    const minor = saltashLastMinor + 1;
-                    const number = `${INVOICE_MAJOR_NUMBER}.${String(minor).padStart(2, '0')}`;
+                if (saltashJobs.length > 0) {
+                    const minor = displaySaltashMinor + 1;
+                    const number = `${currentMajor}.${String(minor).padStart(2, '0')}`;
                     invoiceParts.push(`Saltash: ${number}`);
                 }
 
@@ -373,7 +433,8 @@
                                     <span class="text-xl font-semibold">${weekTitle} (${weekJobs.length} Jobs)</span>
                                     <div class="flex items-center">
                                         ${invoiceDisplay}
-                                        <span class="text-xl font-bold ml-4">Total: ${formatCurrency(totalWeekCost)}</span>
+                                        ${splitTotalsDisplay}
+                                        ${totalDisplay}
                                     </div>
                                     <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300 ml-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                                 </button>
@@ -672,15 +733,15 @@
                 totalMaterials += costs.material;
             });
 
-            const totalLabourNet = totalLabourGross * LABOUR_AFTER_TAX_MULTIPLIER;
-            const totalInvoiceAmount = totalLabourNet + totalMaterials;
             const taxAmount = totalLabourGross * LABOUR_TAX_RATE;
+            const totalLabourNet = totalLabourGross - taxAmount;
+            const totalInvoiceAmount = (totalLabourGross - taxAmount) + totalMaterials;
 
             return {
                 INVOICE_NUMBER: invoiceNumber, // Use the calculated number
                 INVOICE_DATE: today.toLocaleDateString('en-GB'),
-                TOTAL: totalLabourGross.toFixed(2),
-                LABOUR: totalLabourNet.toFixed(2),
+                TOTAL: (totalLabourGross + totalMaterials).toFixed(2),
+                LABOUR: totalLabourGross.toFixed(2),
                 MATERIALS: totalMaterials.toFixed(2),
                 TAX: taxAmount.toFixed(2),
                 AFTER_TAX: totalInvoiceAmount.toFixed(2),
@@ -777,50 +838,66 @@
             let docxSuccessCount = 0;
             let xlsxExportedCount = 0;
 
-            // Get the NEXT minor numbers for this export
-            let currentFreshbuildMinor = freshbuildLastMinor + 1;
-            let currentSaltashMinor = saltashLastMinor + 1;
+            // 1. Check for Financial Year Reset
+            const newMajorNumber = getMajorInvoiceNumber(INVOICE_MAJOR_NUMBER);
+            const resetMinors = newMajorNumber !== INVOICE_MAJOR_NUMBER;
+
+            // Update major number globally (for this session)
+            INVOICE_MAJOR_NUMBER = newMajorNumber;
+
+            // Use current/reset minor numbers
+            let currentFreshbuildMinor = resetMinors ? 0 : freshbuildLastMinor;
+            let currentSaltashMinor = resetMinors ? 0 : saltashLastMinor;
+
+            // Increment for the FIRST invoice of the sequence
+            currentFreshbuildMinor += 1;
+            currentSaltashMinor += 1;
+
+            // Track the minor numbers that should be saved if successful
+            let nextFreshbuildMinor = currentFreshbuildMinor;
+            let nextSaltashMinor = currentSaltashMinor;
+
 
             const peabodyJobs = jobsToExport.filter(job => job.isPeabody);
-            const hackneyJobs = jobsToExport.filter(job => job.isHackney);
-            const otherNonClientJobs = jobsToExport.filter(job => !job.isPeabody && !job.isHackney);
+            const saltashJobs = jobsToExport.filter(job => !job.isPeabody); // ALL jobs that are NOT Peabody
+
 
             // 2. FRESHBUILD (Peabody jobs)
             if (peabodyJobs.length > 0) {
-                // Format: FB_25.22
+                // Format: FB_26.01
                 const freshbuildNumber = `FB_${INVOICE_MAJOR_NUMBER}.${String(currentFreshbuildMinor).padStart(2, '0')}`;
                 const freshbuildData = aggregateInvoiceData(peabodyJobs, freshbuildNumber);
 
                 if (await window.generateDocxInvoice('Freshbuild', freshbuildData)) {
                     docxSuccessCount++;
                     // Only update the global counter if generation was successful
-                    freshbuildLastMinor = currentFreshbuildMinor;
+                    freshbuildLastMinor = nextFreshbuildMinor;
                 }
             } else {
                 console.log('No Peabody jobs found for Freshbuild invoice.');
             }
 
 
-            // 3. SALTASH (Hackney jobs)
-            if (hackneyJobs.length > 0) {
-                // Format: 25.29
+            // 3. SALTASH (Non-Peabody jobs)
+            if (saltashJobs.length > 0) {
+                // Format: 26.01
                 const saltashNumber = `${INVOICE_MAJOR_NUMBER}.${String(currentSaltashMinor).padStart(2, '0')}`;
-                const saltashData = aggregateInvoiceData(hackneyJobs, saltashNumber);
+                const saltashData = aggregateInvoiceData(saltashJobs, saltashNumber);
 
                 if (await window.generateDocxInvoice('Saltash', saltashData)) {
                     docxSuccessCount++;
                     // Only update the global counter if generation was successful
-                    saltashLastMinor = currentSaltashMinor;
+                    saltashLastMinor = nextSaltashMinor;
                 }
             } else {
-                console.log('No Hackney jobs found for Saltash invoice.');
+                console.log('No non-Peabody jobs found for Saltash invoice.');
             }
 
 
             // -----------------------------------------------------
             // --- XLSX Generation ---
 
-            const otherJobsForXLSX = hackneyJobs.concat(otherNonClientJobs);
+            const otherJobsForXLSX = saltashJobs; // This is the complete non-Peabody set
 
             if (peabodyJobs.length > 0) {
                 generateXLSX(peabodyJobs, 'Peabody', targetWeekStartDate);
@@ -828,7 +905,7 @@
             }
 
             if (otherJobsForXLSX.length > 0) {
-                generateXLSX(otherJobsForXLSX, 'Other', targetWeekStartDate);
+                generateXLSX(otherJobsForXLSX, 'Other', targetWeekStartDate); // This is now the non-Peabody report
                 xlsxExportedCount++;
             }
 
@@ -842,10 +919,10 @@
             if (docxSuccessCount > 0) {
                 finalMessage += `DOCX Invoices Generated: ${docxSuccessCount} file(s) with new invoice numbers:\n`;
                 if (peabodyJobs.length > 0) finalMessage += ` - Freshbuild: FB_${INVOICE_MAJOR_NUMBER}.${String(freshbuildLastMinor).padStart(2, '0')}\n`;
-                if (hackneyJobs.length > 0) finalMessage += ` - Saltash: ${INVOICE_MAJOR_NUMBER}.${String(saltashLastMinor).padStart(2, '0')}\n`;
-                finalMessage += `\n**IMPORTANT: To persist these numbers for next week, you MUST copy the final minor numbers (${freshbuildLastMinor} and ${saltashLastMinor}) back into the script's configuration constants at the top of the file.**\n`;
+                if (saltashJobs.length > 0) finalMessage += ` - Saltash: ${INVOICE_MAJOR_NUMBER}.${String(saltashLastMinor).padStart(2, '0')}\n`;
+                finalMessage += `\n**IMPORTANT: To persist these numbers for next week, you MUST copy the final major number (${INVOICE_MAJOR_NUMBER}) and minor numbers (${freshbuildLastMinor} and ${saltashLastMinor}) back into the script's configuration constants at the top of the file.**\n`;
             } else {
-                finalMessage += `DOCX Invoices: No jobs found for Freshbuild (Peabody) or Saltash (Hackney), or template error occurred.\n`;
+                finalMessage += `DOCX Invoices: No jobs found for Freshbuild (Peabody) or Saltash (Non-Peabody), or template error occurred.\n`;
             }
 
             if (xlsxExportedCount > 0) {
