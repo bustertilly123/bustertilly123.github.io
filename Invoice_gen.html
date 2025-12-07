@@ -649,9 +649,8 @@
             };
         }
 
-        // This function retrieves the client data using the uppercase key
         function getClientData(clientKey) {
-            // This is where the error occurs if clientKey is not a valid key in CLIENT_DATA
+            // clientKey is expected to be uppercase (FRESHBUILD or SALTASH)
             const data = CLIENT_DATA[clientKey];
             if (!data) {
                 throw new Error(`Client data not found for key: ${clientKey}`);
@@ -671,19 +670,20 @@
         }
 
         window.generateDocxInvoice = async function (clientKey, data) {
-            // Template file names use Title Case (e.g., 'FreshbuildBlank.docx')
-            const templateFileName = `${clientKey.charAt(0).toUpperCase() + clientKey.slice(1).toLowerCase()}Blank.docx`; 
+            // FIX: Use the correct, single template file name: ClientInvoiceBlank.docx
+            const templateFileName = `ClientInvoiceBlank.docx`; 
             
             try {
-                // Pass the uppercase key to getClientData
-                const clientInfo = getClientData(clientKey.toUpperCase()); // <--- PASSING UPPERCASE KEY HERE
+                // Use the uppercase key to look up client data (address/name)
+                const clientInfo = getClientData(clientKey.toUpperCase()); 
                 
                 const dataToInject = { 
                     ...data,
                     ...clientInfo
                 };
                 
-                const outputFileName = `${clientKey.charAt(0).toUpperCase() + clientKey.slice(1).toLowerCase()}_Invoice_${dataToInject.INVOICE_NUMBER}.docx`;
+                // Output file name remains client-specific (e.g., Freshbuild_Invoice_...)
+                const outputFileName = `${clientKey}_Invoice_${dataToInject.INVOICE_NUMBER}.docx`;
 
                 const content = await loadTemplateBinary(templateFileName); 
                 
@@ -709,7 +709,9 @@
             } catch (error) {
                 console.error(`DOCX Generation Error for ${clientKey}:`, error);
                 let errorMessage = `Failed to generate ${clientKey} invoice: ${error.message}`;
-                if (error.properties) {
+                if (error.message.includes("Failed to load template")) {
+                    errorMessage = `CRITICAL ERROR: Failed to load the single template (${templateFileName}). Please ensure the file is uploaded and named correctly.`;
+                } else if (error.properties) {
                      errorMessage = `Docxtemplater Error in template. Tag: ${error.properties.tag}, Part: ${error.properties.part}. CRITICAL: Check your Word template for hidden formatting (Content Controls) and spaces in tags.`;
                 } else if (error.message.includes("Client data not found")) {
                      errorMessage = `CRITICAL ERROR: Client key mismatch. Ensure client data object keys are consistent. Error: ${error.message}`;
@@ -744,7 +746,6 @@
             // 2. FRESHBUILD (Peabody jobs)
             if (peabodyJobs.length > 0) {
                 const freshbuildData = aggregateInvoiceData(peabodyJobs);
-                // *** FIX: Pass 'Freshbuild' to generateDocxInvoice. Internally it handles the case logic. ***
                 if (await window.generateDocxInvoice('Freshbuild', freshbuildData)) { 
                     docxSuccessCount++;
                 }
@@ -756,7 +757,6 @@
             // 3. SALTASH (Hackney jobs)
             if (hackneyJobs.length > 0) {
                 const saltashData = aggregateInvoiceData(hackneyJobs);
-                // *** FIX: Pass 'Saltash' to generateDocxInvoice. Internally it handles the case logic. ***
                 if (await window.generateDocxInvoice('Saltash', saltashData)) {
                     docxSuccessCount++;
                 }
@@ -785,7 +785,7 @@
             let finalMessage = `Export complete for the week of ${weekRange}.\n\n`;
 
             if (docxSuccessCount > 0) {
-                finalMessage += `DOCX Invoices Generated: ${docxSuccessCount} file(s). (Freshbuild: Peabody Jobs, Saltash: Hackney Jobs)\n`;
+                finalMessage += `DOCX Invoices Generated: ${docxSuccessCount} file(s). (Both use the **ClientInvoiceBlank.docx** template with dynamic address insertion.)\n`;
             } else {
                  finalMessage += `DOCX Invoices: No jobs found for Freshbuild (Peabody) or Saltash (Hackney), or template error occurred.\n`;
             }
