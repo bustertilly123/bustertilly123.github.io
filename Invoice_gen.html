@@ -591,7 +591,8 @@
         // SECTION 6: XLSX EXPORT LOGIC (SheetJS)
         // ==========================================================
 
-        const generateXLSX = function (jobs, type, weekStartDate) {
+        // *** UPDATED: Added invoiceNumber parameter ***
+        const generateXLSX = function (jobs, type, weekStartDate, invoiceNumber) {
             if (jobs.length === 0) return;
 
             const excelData = jobs.map(job => {
@@ -707,12 +708,16 @@
             worksheet['!cols'] = wscols;
 
             const workbook = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(workbook, worksheet, `${type} Report`);
+            XLSX.utils.book_append_sheet(workbook, worksheet, `Jobs`);
 
             const weekTitleForFile = formatWeekRange(weekStartDate);
             const safeWeekTitle = weekTitleForFile.replace(/[^a-zA-Z0-9]/g, '_');
 
-            XLSX.writeFile(workbook, `Job_Report_${type}_${safeWeekTitle}.xlsx`, { bookType: 'xlsx', type: 'base64' });
+            // *** UPDATED: Filename now includes the invoice number ***
+            const safeInvoiceNumber = invoiceNumber.replace(/[^a-zA-Z0-9_]/g, '.');
+            const finalFileName = `${safeInvoiceNumber}.xlsx`;
+
+            XLSX.writeFile(workbook, finalFileName, { bookType: 'xlsx', type: 'base64' });
         };
 
 
@@ -782,7 +787,7 @@
                 };
 
                 // Output file name remains client-specific (e.g., Freshbuild_Invoice_...)
-                const outputFileName = `${clientKey}_Invoice_${dataToInject.INVOICE_NUMBER}.docx`;
+                const outputFileName = `${dataToInject.INVOICE_NUMBER}.docx`;
 
                 const content = await loadTemplateBinary(templateFileName);
 
@@ -838,6 +843,11 @@
             let docxSuccessCount = 0;
             let xlsxExportedCount = 0;
 
+            // Invoice number placeholders
+            let freshbuildInvoiceNumber = '';
+            let saltashInvoiceNumber = '';
+
+
             // 1. Check for Financial Year Reset
             const newMajorNumber = getMajorInvoiceNumber(INVOICE_MAJOR_NUMBER);
             const resetMinors = newMajorNumber !== INVOICE_MAJOR_NUMBER;
@@ -864,9 +874,9 @@
 
             // 2. FRESHBUILD (Peabody jobs)
             if (peabodyJobs.length > 0) {
-                // Format: FB_26.01
-                const freshbuildNumber = `FB_${INVOICE_MAJOR_NUMBER}.${String(currentFreshbuildMinor).padStart(2, '0')}`;
-                const freshbuildData = aggregateInvoiceData(peabodyJobs, freshbuildNumber);
+                // Format: FB_26.01 
+                freshbuildInvoiceNumber = `FB_${INVOICE_MAJOR_NUMBER}.${String(currentFreshbuildMinor).padStart(2, '0')}`;
+                const freshbuildData = aggregateInvoiceData(peabodyJobs, freshbuildInvoiceNumber);
 
                 if (await window.generateDocxInvoice('Freshbuild', freshbuildData)) {
                     docxSuccessCount++;
@@ -881,8 +891,8 @@
             // 3. SALTASH (Non-Peabody jobs)
             if (saltashJobs.length > 0) {
                 // Format: 26.01
-                const saltashNumber = `${INVOICE_MAJOR_NUMBER}.${String(currentSaltashMinor).padStart(2, '0')}`;
-                const saltashData = aggregateInvoiceData(saltashJobs, saltashNumber);
+                saltashInvoiceNumber = `${INVOICE_MAJOR_NUMBER}.${String(currentSaltashMinor).padStart(2, '0')}`;
+                const saltashData = aggregateInvoiceData(saltashJobs, saltashInvoiceNumber);
 
                 if (await window.generateDocxInvoice('Saltash', saltashData)) {
                     docxSuccessCount++;
@@ -897,15 +907,17 @@
             // -----------------------------------------------------
             // --- XLSX Generation ---
 
-            const otherJobsForXLSX = saltashJobs; // This is the complete non-Peabody set
+            const otherJobsForXLSX = saltashJobs;
 
+            // *** UPDATED: Passing the calculated invoice number to XLSX function ***
             if (peabodyJobs.length > 0) {
-                generateXLSX(peabodyJobs, 'Peabody', targetWeekStartDate);
+                generateXLSX(peabodyJobs, 'Peabody', targetWeekStartDate, freshbuildInvoiceNumber);
                 xlsxExportedCount++;
             }
 
+            // *** UPDATED: Passing the calculated invoice number to XLSX function ***
             if (otherJobsForXLSX.length > 0) {
-                generateXLSX(otherJobsForXLSX, 'Other', targetWeekStartDate); // This is now the non-Peabody report
+                generateXLSX(otherJobsForXLSX, 'Other', targetWeekStartDate, saltashInvoiceNumber); // This is now the non-Peabody report
                 xlsxExportedCount++;
             }
 
@@ -918,15 +930,15 @@
 
             if (docxSuccessCount > 0) {
                 finalMessage += `DOCX Invoices Generated: ${docxSuccessCount} file(s) with new invoice numbers:\n`;
-                if (peabodyJobs.length > 0) finalMessage += ` - Freshbuild: FB_${INVOICE_MAJOR_NUMBER}.${String(freshbuildLastMinor).padStart(2, '0')}\n`;
-                if (saltashJobs.length > 0) finalMessage += ` - Saltash: ${INVOICE_MAJOR_NUMBER}.${String(saltashLastMinor).padStart(2, '0')}\n`;
+                if (peabodyJobs.length > 0) finalMessage += ` - Freshbuild: ${freshbuildInvoiceNumber}\n`;
+                if (saltashJobs.length > 0) finalMessage += ` - Saltash: ${saltashInvoiceNumber}\n`;
                 finalMessage += `\n**IMPORTANT: To persist these numbers for next week, you MUST copy the final major number (${INVOICE_MAJOR_NUMBER}) and minor numbers (${freshbuildLastMinor} and ${saltashLastMinor}) back into the script's configuration constants at the top of the file.**\n`;
             } else {
                 finalMessage += `DOCX Invoices: No jobs found for Freshbuild (Peabody) or Saltash (Non-Peabody), or template error occurred.\n`;
             }
 
             if (xlsxExportedCount > 0) {
-                finalMessage += `XLSX Reports Generated: ${xlsxExportedCount} file(s). (Totals are calculated in the code to prevent Protected View.)`;
+                finalMessage += `XLSX Reports Generated: ${xlsxExportedCount} file(s). Each file name now includes the corresponding invoice number.`;
             } else {
                 finalMessage += `XLSX Reports: No jobs found for Peabody or Other report.`;
             }
