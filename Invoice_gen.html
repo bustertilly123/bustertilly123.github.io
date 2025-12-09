@@ -47,13 +47,14 @@
         setLogLevel('debug');
 
         // ==========================================================
-        // SECTION 1: CONSTANTS & GLOBAL STATE
+        // SECTION 1: CONSTANTS & GLOBAL STATE (PERSISTENCE ENABLED)
         // ==========================================================
 
         const LABOUR_TAX_RATE = 0.20; // 20% reduction applied to labour price
         const LABOUR_AFTER_TAX_MULTIPLIER = 1 - LABOUR_TAX_RATE; // 0.80
 
         const DB_COLLECTION = 'jobs';
+        const INVOICE_NUMBERS_DOC_PATH = 'invoice_config/current_numbers'; // <-- New constant for config path
 
         let app;
         let db;
@@ -61,14 +62,14 @@
         let userId = null;
         let allJobs = [];
         let isAuthReady = false;
+        let areInvoiceNumbersLoaded = false; // <-- New flag to ensure config loads first
 
-        // --- INVOICE NUMBERING CONFIGURATION ---
-        // CRITICAL: You must manually update these values in this file after a successful
-        // weekly export, and manually reset the Major Number and minors on April 1st.
-        let INVOICE_MAJOR_NUMBER = 25; // The '25' part in 25.XX or FB_25.XX
-        let saltashLastMinor = 28;       // Last minor number used for Saltash (25.28). Next will be 29.
-        let freshbuildLastMinor = 21;    // Last minor number used for Freshbuild (FB_25.21). Next will be 22.
-        // ----------------------------------------
+        // --- INVOICE NUMBERING STATE ---
+        // These variables will now be loaded from Firestore and updated automatically.
+        let INVOICE_MAJOR_NUMBER = 0;
+        let saltashLastMinor = 0;
+        let freshbuildLastMinor = 0;
+        // -------------------------------
 
 
         // --- CONFIGURATION: User's credentials are now inserted here. ---
@@ -111,12 +112,17 @@
 
 
         // ==========================================================
-        // SECTION 2: FIREBASE INITIALIZATION & AUTH
+        // SECTION 2: FIREBASE INITIALIZATION & AUTH (UPDATED FOR CONFIG LOAD)
         // ==========================================================
 
         function getJobsCollectionRef() {
             const collectionPath = `artifacts/${appId}/public/data/${DB_COLLECTION}`;
             return collection(db, collectionPath);
+        }
+
+        function getInvoiceConfigDocRef() {
+            const docPath = `artifacts/${appId}/public/data/${INVOICE_NUMBERS_DOC_PATH}`;
+            return doc(db, docPath);
         }
 
         async function initFirebase() {
@@ -153,6 +159,7 @@
 
                         if (!isAuthReady) {
                             isAuthReady = true;
+                            // Start the invoice number listener first
                             setupRealTimeListener();
                         }
                     } else {
@@ -171,6 +178,43 @@
         function setupRealTimeListener() {
             if (!userId) return;
 
+            // 1. Setup Invoice Number Listener
+            setupInvoiceNumberListener();
+        }
+
+        function setupInvoiceNumberListener() {
+            onSnapshot(getInvoiceConfigDocRef(), (docSnapshot) => {
+                const data = docSnapshot.data();
+
+                if (data) {
+                    // Load numbers from Firestore
+                    INVOICE_MAJOR_NUMBER = data.majorNumber || 25; // Default to 25 if missing
+                    freshbuildLastMinor = data.freshbuildMinor || 0;
+                    saltashLastMinor = data.saltashMinor || 0;
+                } else {
+                    // Document not found, use safe defaults
+                    console.log("Invoice config not found, using defaults and will initialize upon first save.");
+                    INVOICE_MAJOR_NUMBER = 25;
+                    freshbuildLastMinor = 0;
+                    saltashLastMinor = 0;
+                }
+
+                if (!areInvoiceNumbersLoaded) {
+                    areInvoiceNumbersLoaded = true;
+                    // 2. Setup Jobs Listener only after invoice numbers are loaded
+                    setupJobsListener();
+                } else {
+                    // If numbers update while page is open, just re-render to update UI
+                    renderJobs();
+                }
+
+            }, (error) => {
+                console.error("Error setting up invoice number listener:", error);
+                document.getElementById('authStatus').textContent = `Error loading config: ${error.message}`;
+            });
+        }
+
+        function setupJobsListener() {
             const jobsQuery = query(getJobsCollectionRef());
             const loadingIndicator = document.getElementById('loadingIndicator');
 
@@ -180,13 +224,14 @@
                     allJobs.push({ id: doc.id, ...doc.data() });
                 });
                 loadingIndicator.style.display = 'none';
-                renderJobs();
+                renderJobs(); // Render jobs now that we have both jobs and config
             }, (error) => {
                 console.error("Error setting up real-time listener:", error);
                 loadingIndicator.style.display = 'none';
                 document.getElementById('authStatus').textContent = `Error loading data: ${error.message}`;
             });
         }
+
 
         // ==========================================================
         // SECTION 3: UTILITIES & CALCULATIONS
@@ -263,13 +308,10 @@
             const currentYear = now.getFullYear();
 
             // Expected major number calculation:
-            // If it's Jan, Feb, Mar (0, 1, 2), the financial year is based on the previous calendar year (e.g., Jan 2026 is FY 25-26).
-            // If it's April to Dec (3-11), the financial year is based on the current calendar year (e.g., April 2026 is FY 26-27).
-
             let expectedMajorNumber;
-            if (currentMonth < 3) { // Jan, Feb, Mar
+            if (currentMonth < 3) { // Jan, Feb, Mar are part of the previous FY
                 expectedMajorNumber = (currentYear - 1) % 100;
-            } else { // Apr to Dec
+            } else { // Apr to Dec are part of the current FY
                 expectedMajorNumber = currentYear % 100;
             }
 
@@ -282,6 +324,28 @@
             return currentMajorNumber;
         }
 
+        /**
+         * Saves the current invoice numbers to the Firestore database for persistence.
+         */
+        async function saveInvoiceNumbers(major, freshbuildMinor, saltashMinor) {
+            if (!isAuthReady || !userId) return;
+            try {
+                const configData = {
+                    majorNumber: major,
+                    freshbuildMinor: freshbuildMinor,
+                    saltashMinor: saltashMinor
+                };
+                await setDoc(getInvoiceConfigDocRef(), configData, { merge: true });
+                console.log("Successfully saved new invoice numbers to Firestore.");
+                return true;
+            } catch (e) {
+                console.error("Error saving invoice numbers:", e);
+                alert(`CRITICAL: Failed to save invoice numbers to database! Please save manually. Error: ${e.message}`);
+                return false;
+            }
+        }
+
+
         // ==========================================================
         // SECTION 4: RENDERING & DISPLAY LOGIC
         // ==========================================================
@@ -292,42 +356,42 @@
                 (job.isPeabody ? '<span class="text-red-600 font-bold ml-2">Peabody</span>' : 'Other');
 
             return `
-                            <div id="job-${job.id}" class="job-card bg-gray-50 p-5 rounded-lg shadow-sm border border-gray-100">
-                                <div class="flex justify-between items-start mb-3">
-                                    <h3 class="text-xl font-bold text-gray-900">${job.title}</h3>
-                                    <span class="text-sm font-medium text-gray-600">Completed: ${job.dateCompleted || 'N/A'}</span>
-                                </div>
+                    <div id="job-${job.id}" class="job-card bg-gray-50 p-5 rounded-lg shadow-sm border border-gray-100">
+                        <div class="flex justify-between items-start mb-3">
+                            <h3 class="text-xl font-bold text-gray-900">${job.title}</h3>
+                            <span class="text-sm font-medium text-gray-600">Completed: ${job.dateCompleted || 'N/A'}</span>
+                        </div>
 
-                                <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm text-gray-700 border-b pb-2">
-                                    <div><span class="font-semibold text-gray-600">Labour Before Tax:</span> ${formatCurrency(costs.grossLabour)}</div>
-                                    <div><span class="font-semibold text-gray-600">Labour After Tax:</span> ${formatCurrency(costs.netLabour)}</div>
-                                    <div><span class="font-semibold text-gray-600">Material Cost:</span> ${formatCurrency(costs.material)}</div>
-                                    <div class="col-span-2 border-t pt-2 mt-1 font-bold text-base text-indigo-700">
-                                        <span class="font-semibold text-gray-600">TOTAL COST:</span> ${formatCurrency(costs.totalNet)}
-                                    </div>
-                                </div>
-
-                                <div class="mb-4 text-sm font-medium pt-3">
-                                    <span class="font-semibold text-gray-600">Job Type:</span> ${jobTypeDisplay}
-                                </div>
-
-                                <p class="text-gray-600 mb-4 pt-1">
-                                    <span class="font-semibold text-gray-600 block mb-1">Description:</span>
-                                    ${job.description || 'No detailed description provided.'}
-                                </p>
-
-                                <div class="flex justify-between items-center text-sm text-gray-500 border-t pt-3">
-                                    <span>Created: ${new Date(job.timestamp).toLocaleDateString()}</span>
-                                    <div class="flex items-center space-x-2">
-                                        <button onclick="editJob('${job.id}')" class="text-indigo-600 hover:text-indigo-800 font-semibold transition">Edit</button>
-
-                                        <button onclick="deleteJob('${job.id}')" class="text-red-500 hover:text-red-700 transition ml-2">
-                                            <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                        </button>
-                                    </div>
-                                </div>
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm text-gray-700 border-b pb-2">
+                            <div><span class="font-semibold text-gray-600">Labour Before Tax:</span> ${formatCurrency(costs.grossLabour)}</div>
+                            <div><span class="font-semibold text-gray-600">Labour After Tax:</span> ${formatCurrency(costs.netLabour)}</div>
+                            <div><span class="font-semibold text-gray-600">Material Cost:</span> ${formatCurrency(costs.material)}</div>
+                            <div class="col-span-2 border-t pt-2 mt-1 font-bold text-base text-indigo-700">
+                                <span class="font-semibold text-gray-600">TOTAL COST:</span> ${formatCurrency(costs.totalNet)}
                             </div>
-                        `;
+                        </div>
+
+                        <div class="mb-4 text-sm font-medium pt-3">
+                            <span class="font-semibold text-gray-600">Job Type:</span> ${jobTypeDisplay}
+                        </div>
+
+                        <p class="text-gray-600 mb-4 pt-1">
+                            <span class="font-semibold text-gray-600 block mb-1">Description:</span>
+                            ${job.description || 'No detailed description provided.'}
+                        </p>
+
+                        <div class="flex justify-between items-center text-sm text-gray-500 border-t pt-3">
+                            <span>Created: ${new Date(job.timestamp).toLocaleDateString()}</span>
+                            <div class="flex items-center space-x-2">
+                                <button onclick="editJob('${job.id}')" class="text-indigo-600 hover:text-indigo-800 font-semibold transition">Edit</button>
+
+                                <button onclick="deleteJob('${job.id}')" class="text-red-500 hover:text-red-700 transition ml-2">
+                                    <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
         }
 
         window.renderJobs = function () {
@@ -397,8 +461,8 @@
                 // --- Calculate Next Invoice Numbers for Display ---
                 let invoiceParts = [];
                 // Reset minor numbers for display if major change is needed
-                const displaySaltashMinor = minorResetNeeded ? 0 : saltashLastMinor;
                 const displayFreshbuildMinor = minorResetNeeded ? 0 : freshbuildLastMinor;
+                const displaySaltashMinor = minorResetNeeded ? 0 : saltashLastMinor;
 
 
                 if (peabodyJobs.length > 0) {
@@ -426,26 +490,26 @@
                 groupElement.className = 'week-group mb-6';
 
                 groupElement.innerHTML = `
-                            <div class="flex items-center bg-indigo-600 text-white rounded-t-xl shadow-md">
-                                <button id="toggle-${weekStartDate}"
-                                        class="flex-1 flex justify-between items-center p-4 hover:bg-indigo-700 transition"
-                                        onclick="toggleWeekDisplay('${weekStartDate}')" aria-expanded="true">
-                                    <span class="text-xl font-semibold">${weekTitle} (${weekJobs.length} Jobs)</span>
-                                    <div class="flex items-center">
-                                        ${invoiceDisplay}
-                                        ${splitTotalsDisplay}
-                                        ${totalDisplay}
-                                    </div>
-                                    <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300 ml-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                                </button>
-                                <button onclick="exportWeekData('${weekStartDate}')"
-                                        class="bg-green-600 h-full px-4 py-4 rounded-tr-xl hover:bg-green-700 transition text-sm font-bold border-l border-indigo-500">
-                                    Export Week
-                                </button>
-                            </div>
-                            <div id="jobs-${weekStartDate}" class="jobs-container space-y-4 p-4 bg-white border border-t-0 border-gray-200 rounded-b-xl">
+                        <div class="flex items-center bg-indigo-600 text-white rounded-t-xl shadow-md">
+                            <button id="toggle-${weekStartDate}"
+                                    class="flex-1 flex justify-between items-center p-4 hover:bg-indigo-700 transition"
+                                    onclick="toggleWeekDisplay('${weekStartDate}')" aria-expanded="true">
+                                <span class="text-xl font-semibold">${weekTitle} (${weekJobs.length} Jobs)</span>
+                                <div class="flex items-center">
+                                    ${invoiceDisplay}
+                                    ${splitTotalsDisplay}
+                                    ${totalDisplay}
                                 </div>
-                        `;
+                                <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300 ml-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                            </button>
+                            <button onclick="exportWeekData('${weekStartDate}')"
+                                    class="bg-green-600 h-full px-4 py-4 rounded-tr-xl hover:bg-green-700 transition text-sm font-bold border-l border-indigo-500">
+                                Export Week
+                            </button>
+                        </div>
+                        <div id="jobs-${weekStartDate}" class="jobs-container space-y-4 p-4 bg-white border border-t-0 border-gray-200 rounded-b-xl">
+                            </div>
+                    `;
 
                 jobListContainer.appendChild(groupElement);
 
@@ -525,33 +589,33 @@
             const checkedValue = job.isHackney ? 'hackney' : (job.isPeabody ? 'peabody' : null);
 
             const editFormHtml = `
-                            <form id="editForm-${id}" class="space-y-4" onsubmit="saveEdit(event, '${id}')">
-                                <div><label for="editAddress-${id}" class="block text-sm font-medium text-gray-700">Job Address</label><input type="text" id="editAddress-${id}" required class="input-field" value="${job.address}"></div>
-                                <div class="mb-4"><label for="editDateCompleted-${id}" class="block text-sm font-medium text-gray-700">Date Completed</label><input type="date" id="editDateCompleted-${id}" class="input-field" value="${job.dateCompleted || ''}"></div>
-                                <div class="grid grid-cols-2 gap-4">
-                                    <div><label for="editLabourPrice-${id}" class="block text-sm font-medium text-gray-700">Labour Price (£)</label><input type="number" id="editLabourPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.labourPrice || ''}"></div>
-                                    <div><label for="editMaterialPrice-${id}" class="block text-sm font-medium text-gray-700">Material Price (£)</label><input type="number" id="editMaterialPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.materialPrice || ''}"></div>
-                                </div>
-                                <div><label for="editDescription-${id}" class="block text-sm font-medium text-gray-700">Description</label><textarea id="editDescription-${id}" rows="3" class="input-field">${job.description || ''}</textarea></div>
+                    <form id="editForm-${id}" class="space-y-4" onsubmit="saveEdit(event, '${id}')">
+                        <div><label for="editAddress-${id}" class="block text-sm font-medium text-gray-700">Job Address</label><input type="text" id="editAddress-${id}" required class="input-field" value="${job.address}"></div>
+                        <div class="mb-4"><label for="editDateCompleted-${id}" class="block text-sm font-medium text-gray-700">Date Completed</label><input type="date" id="editDateCompleted-${id}" class="input-field" value="${job.dateCompleted || ''}"></div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div><label for="editLabourPrice-${id}" class="block text-sm font-medium text-gray-700">Labour Price (£)</label><input type="number" id="editLabourPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.labourPrice || ''}"></div>
+                            <div><label for="editMaterialPrice-${id}" class="block text-sm font-medium text-gray-700">Material Price (£)</label><input type="number" id="editMaterialPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.materialPrice || ''}"></div>
+                        </div>
+                        <div><label for="editDescription-${id}" class="block text-sm font-medium text-gray-700">Description</label><textarea id="editDescription-${id}" rows="3" class="input-field">${job.description || ''}</textarea></div>
 
-                                <div class="space-y-2"><span class="block text-sm font-medium text-gray-700">Job Type:</span>
-                                    <div class="flex space-x-6">
-                                        <div class="flex items-center">
-                                            <input id="editIsHackney-${id}" type="radio" name="editJobType-${id}" value="hackney" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'hackney' ? 'checked' : ''} onclick="handleRadioClick(event)">
-                                            <label for="editIsHackney-${id}" class="ml-2 block text-sm font-medium text-gray-700">Hackney</label>
-                                        </div>
-                                        <div class="flex items-center">
-                                            <input id="editIsPeabody-${id}" type="radio" name="editJobType-${id}" value="peabody" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'peabody' ? 'checked' : ''} onclick="handleRadioClick(event)">
-                                            <label for="editIsPeabody-${id}" class="ml-2 block text-sm font-medium text-gray-700">Peabody</label>
-                                        </div>
-                                    </div>
+                        <div class="space-y-2"><span class="block text-sm font-medium text-gray-700">Job Type:</span>
+                            <div class="flex space-x-6">
+                                <div class="flex items-center">
+                                    <input id="editIsHackney-${id}" type="radio" name="editJobType-${id}" value="hackney" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'hackney' ? 'checked' : ''} onclick="handleRadioClick(event)">
+                                    <label for="editIsHackney-${id}" class="ml-2 block text-sm font-medium text-gray-700">Hackney</label>
                                 </div>
+                                <div class="flex items-center">
+                                    <input id="editIsPeabody-${id}" type="radio" name="editJobType-${id}" value="peabody" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'peabody' ? 'checked' : ''} onclick="handleRadioClick(event)">
+                                    <label for="editIsPeabody-${id}" class="ml-2 block text-sm font-medium text-gray-700">Peabody</label>
+                                </div>
+                            </div>
+                        </div>
 
-                                <div class="flex space-x-3 pt-2">
-                                    <button type="submit" class="flex-1 bg-green-600 text-white font-bold py-2 rounded-lg shadow-md hover:bg-green-700 transition">Save Changes</button>
-                                    <button type="button" onclick="renderJobs()" class="flex-1 bg-gray-300 text-gray-800 font-bold py-2 rounded-lg shadow-md hover:bg-gray-400 transition">Cancel</button>
-                                </div>
-                            </form>`;
+                        <div class="flex space-x-3 pt-2">
+                            <button type="submit" class="flex-1 bg-green-600 text-white font-bold py-2 rounded-lg shadow-md hover:bg-green-700 transition">Save Changes</button>
+                            <button type="button" onclick="renderJobs()" class="flex-1 bg-gray-300 text-gray-800 font-bold py-2 rounded-lg shadow-md hover:bg-gray-400 transition">Cancel</button>
+                        </div>
+                    </form>`;
 
             cardElement.innerHTML = editFormHtml;
 
@@ -839,6 +903,13 @@
                 return;
             }
 
+            // IMPORTANT: Wait for invoice numbers to be loaded before proceeding
+            if (!areInvoiceNumbersLoaded) {
+                alert("Invoice numbers are still loading from the database. Please wait a moment and try again.");
+                return;
+            }
+
+
             const weekRange = formatWeekRange(targetWeekStartDate);
             let docxSuccessCount = 0;
             let xlsxExportedCount = 0;
@@ -909,13 +980,11 @@
 
             const otherJobsForXLSX = saltashJobs;
 
-            // *** UPDATED: Passing the calculated invoice number to XLSX function ***
             if (peabodyJobs.length > 0) {
                 generateXLSX(peabodyJobs, 'Peabody', targetWeekStartDate, freshbuildInvoiceNumber);
                 xlsxExportedCount++;
             }
 
-            // *** UPDATED: Passing the calculated invoice number to XLSX function ***
             if (otherJobsForXLSX.length > 0) {
                 generateXLSX(otherJobsForXLSX, 'Other', targetWeekStartDate, saltashInvoiceNumber); // This is now the non-Peabody report
                 xlsxExportedCount++;
@@ -927,12 +996,21 @@
             // --- Final Alert ---
 
             let finalMessage = `Export complete for the week of ${weekRange}.\n\n`;
+            let saveSuccess = false;
 
             if (docxSuccessCount > 0) {
+                // 4. Save the new invoice numbers to the database for persistence
+                saveSuccess = await saveInvoiceNumbers(INVOICE_MAJOR_NUMBER, freshbuildLastMinor, saltashLastMinor);
+
                 finalMessage += `DOCX Invoices Generated: ${docxSuccessCount} file(s) with new invoice numbers:\n`;
                 if (peabodyJobs.length > 0) finalMessage += ` - Freshbuild: ${freshbuildInvoiceNumber}\n`;
                 if (saltashJobs.length > 0) finalMessage += ` - Saltash: ${saltashInvoiceNumber}\n`;
-                finalMessage += `\n**IMPORTANT: To persist these numbers for next week, you MUST copy the final major number (${INVOICE_MAJOR_NUMBER}) and minor numbers (${freshbuildLastMinor} and ${saltashLastMinor}) back into the script's configuration constants at the top of the file.**\n`;
+
+                if (saveSuccess) {
+                    finalMessage += `\n**SUCCESS:** New invoice numbers have been **automatically saved** to the database for persistence. You no longer need to update the script manually.`;
+                } else {
+                    finalMessage += `\n**ERROR:** Failed to automatically save new invoice numbers. Check the console for details and record the new numbers manually.`;
+                }
             } else {
                 finalMessage += `DOCX Invoices: No jobs found for Freshbuild (Peabody) or Saltash (Non-Peabody), or template error occurred.\n`;
             }
