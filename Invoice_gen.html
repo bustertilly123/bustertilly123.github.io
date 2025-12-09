@@ -62,18 +62,16 @@
         let userId = null;
         let allJobs = [];
         let isAuthReady = false;
-        let areInvoiceNumbersLoaded = false; // Flag to ensure config loads first
+        let areInvoiceNumbersLoaded = false;
 
         // --- INVOICE NUMBERING STATE ---
-        // These variables are loaded from Firestore and drive both display and export.
-        // They will default to 0/25 if no config is found in the database.
         let INVOICE_MAJOR_NUMBER = 0;
         let saltashLastMinor = 0;
         let freshbuildLastMinor = 0;
         // -------------------------------
 
 
-        // --- CONFIGURATION: User's credentials are now inserted here. ---
+        // --- CONFIGURATION: Your credentials are now inserted here. ---
         //
         const FIREBASE_CONFIG = (function () {
             if (typeof __firebase_config !== 'undefined') {
@@ -99,7 +97,6 @@
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         // --- CLIENT ADDRESS DATA ---
-        // *** KEYS ARE UPPERCASE ***
         const CLIENT_DATA = {
             FRESHBUILD: {
                 name: 'FRESHBUILD LIMITED',
@@ -160,7 +157,6 @@
 
                         if (!isAuthReady) {
                             isAuthReady = true;
-                            // Start the invoice number listener first
                             setupRealTimeListener();
                         }
                     } else {
@@ -178,8 +174,6 @@
 
         function setupRealTimeListener() {
             if (!userId) return;
-
-            // 1. Setup Invoice Number Listener
             setupInvoiceNumberListener();
         }
 
@@ -188,12 +182,10 @@
                 const data = docSnapshot.data();
 
                 if (data) {
-                    // Load numbers from Firestore
-                    INVOICE_MAJOR_NUMBER = data.majorNumber || 25; // Default to 25 if missing
+                    INVOICE_MAJOR_NUMBER = data.majorNumber || 25;
                     freshbuildLastMinor = data.freshbuildMinor || 0;
                     saltashLastMinor = data.saltashMinor || 0;
                 } else {
-                    // Document not found, use safe defaults
                     console.log("Invoice config not found, using defaults and will initialize upon first save.");
                     INVOICE_MAJOR_NUMBER = 25;
                     freshbuildLastMinor = 0;
@@ -202,10 +194,8 @@
 
                 if (!areInvoiceNumbersLoaded) {
                     areInvoiceNumbersLoaded = true;
-                    // 2. Setup Jobs Listener only after invoice numbers are loaded
                     setupJobsListener();
                 } else {
-                    // If numbers update while page is open, just re-render to update UI
                     renderJobs();
                 }
 
@@ -225,7 +215,7 @@
                     allJobs.push({ id: doc.id, ...doc.data() });
                 });
                 loadingIndicator.style.display = 'none';
-                renderJobs(); // Render jobs now that we have both jobs and config
+                renderJobs();
             }, (error) => {
                 console.error("Error setting up real-time listener:", error);
                 loadingIndicator.style.display = 'none';
@@ -300,23 +290,19 @@
         /**
          * Checks the current date to determine if a financial year reset is needed.
          * The financial year starts on April 1st.
-         * @param {number} currentMajorNumber The current major invoice number (e.g., 25).
-         * @returns {number} The major invoice number to use.
          */
         function getMajorInvoiceNumber(currentMajorNumber) {
             const now = new Date();
-            const currentMonth = now.getMonth(); // 0 (Jan) to 11 (Dec)
+            const currentMonth = now.getMonth();
             const currentYear = now.getFullYear();
 
-            // Expected major number calculation:
             let expectedMajorNumber;
-            if (currentMonth < 3) { // Jan, Feb, Mar are part of the previous FY
+            if (currentMonth < 3) {
                 expectedMajorNumber = (currentYear - 1) % 100;
-            } else { // Apr to Dec are part of the current FY
+            } else {
                 expectedMajorNumber = currentYear % 100;
             }
 
-            // Use the expected number if it's greater than the currently saved number.
             if (currentMajorNumber < expectedMajorNumber) {
                 console.warn(`Financial year reset detected! Major number advancing from ${currentMajorNumber} to ${expectedMajorNumber}. Minor numbers will reset to .01.`);
                 return expectedMajorNumber;
@@ -348,7 +334,7 @@
 
 
         // ==========================================================
-        // SECTION 4: RENDERING & DISPLAY LOGIC (FIXED SEQUENTIAL DISPLAY)
+        // SECTION 4: RENDERING & DISPLAY LOGIC (FIXED SEQUENTIAL DISPLAY & MOBILE)
         // ==========================================================
 
         function createJobCardHtml(job) {
@@ -463,7 +449,6 @@
                     saltashInvoiceNumber = `${currentMajor}.${String(tempSaltashMinor).padStart(2, '0')}`;
                 }
 
-                // Store the calculated number for this week, based on its chronological order
                 weekInvoiceMap[weekStartDate] = { freshbuild: freshbuildInvoiceNumber, saltash: saltashInvoiceNumber };
             });
 
@@ -475,7 +460,7 @@
                 const peabodyJobs = weekJobs.filter(job => job.isPeabody);
                 const saltashJobs = weekJobs.filter(job => !job.isPeabody);
 
-                // --- Calculate Totals (Unchanged) ---
+                // --- Calculate Totals ---
                 const freshbuildTotal = peabodyJobs.reduce((sum, job) => sum + calculateNetJobCost(job).totalNet, 0);
                 const saltashTotal = saltashJobs.reduce((sum, job) => sum + calculateNetJobCost(job).totalNet, 0);
                 const totalWeekCost = freshbuildTotal + saltashTotal;
@@ -514,15 +499,23 @@
                 groupElement.innerHTML = `
                         <div class="flex items-center bg-indigo-600 text-white rounded-t-xl shadow-md">
                             <button id="toggle-${weekStartDate}"
-                                    class="flex-1 flex justify-between items-center p-4 hover:bg-indigo-700 transition"
+                                    class="flex-1 flex justify-between items-start sm:items-center p-4 hover:bg-indigo-700 transition"
                                     onclick="toggleWeekDisplay('${weekStartDate}')" aria-expanded="true">
-                                <span class="text-xl font-semibold">${weekTitle} (${weekJobs.length} Jobs)</span>
-                                <div class="flex items-center">
-                                    ${invoiceDisplay}
-                                    ${splitTotalsDisplay}
-                                    ${totalDisplay}
+                                
+                                <div class="flex-1 min-w-0">
+                                    <span class="text-lg sm:text-xl font-semibold block sm:inline">${weekTitle} (${weekJobs.length} Jobs)</span>
+                                    
+                                    <div class="flex flex-col sm:flex-row sm:items-center mt-2 sm:mt-0"> 
+                                        
+                                        ${invoiceDisplay.replace('ml-4 border-l border-indigo-500 pl-4', 'mt-1 sm:ml-4 sm:border-l sm:border-indigo-500 sm:pl-4')}
+                                        
+                                        ${splitTotalsDisplay.replace('ml-4 border-l border-indigo-500 pl-4', 'mt-1 sm:ml-4 sm:border-l sm:border-indigo-500 sm:pl-4')}
+                                        
+                                        ${totalDisplay.replace('ml-4', 'mt-1 sm:ml-4')}
+                                    </div>
                                 </div>
-                                <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300 ml-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+
+                                <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300 ml-4 sm:ml-0 flex-shrink-0 mt-2 sm:mt-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                             </button>
                             <button onclick="exportWeekData('${weekStartDate}')"
                                     class="bg-green-600 h-full px-4 py-4 rounded-tr-xl hover:bg-green-700 transition text-sm font-bold border-l border-indigo-500">
@@ -621,7 +614,7 @@
                         <div><label for="editDescription-${id}" class="block text-sm font-medium text-gray-700">Description</label><textarea id="editDescription-${id}" rows="3" class="input-field">${job.description || ''}</textarea></div>
 
                         <div class="space-y-2"><span class="block text-sm font-medium text-gray-700">Job Type:</span>
-                            <div class="flex space-x-6">
+                            <div class="flex flex-col sm:flex-row sm:space-x-6 space-y-2 sm:space-y-0">
                                 <div class="flex items-center">
                                     <input id="editIsHackney-${id}" type="radio" name="editJobType-${id}" value="hackney" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'hackney' ? 'checked' : ''} onclick="handleRadioClick(event)">
                                     <label for="editIsHackney-${id}" class="ml-2 block text-sm font-medium text-gray-700">Hackney</label>
@@ -677,7 +670,6 @@
         // SECTION 6: XLSX EXPORT LOGIC (SheetJS)
         // ==========================================================
 
-        // *** UPDATED: Added invoiceNumber parameter ***
         const generateXLSX = function (jobs, type, weekStartDate, invoiceNumber) {
             if (jobs.length === 0) return;
 
@@ -796,12 +788,7 @@
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, `Jobs`);
 
-            const weekTitleForFile = formatWeekRange(weekStartDate);
-            const safeWeekTitle = weekTitleForFile.replace(/[^a-zA-Z0-9]/g, '_');
-
-            // Filename now includes the invoice number
             const safeInvoiceNumber = invoiceNumber.replace(/[^a-zA-Z0-9_]/g, '.');
-            // Using the invoice number as the primary part of the filename
             const finalFileName = `${safeInvoiceNumber}.xlsx`;
 
             XLSX.writeFile(workbook, finalFileName, { bookType: 'xlsx', type: 'base64' });
@@ -812,7 +799,6 @@
         // SECTION 7: DOCX GENERATION LOGIC
         // ==========================================================
 
-        // Modified to accept the pre-calculated invoice number
         function aggregateInvoiceData(jobsToAggregate, invoiceNumber) {
             let totalLabourGross = 0;
             let totalMaterials = 0;
@@ -830,7 +816,7 @@
             const totalInvoiceAmount = (totalLabourGross - taxAmount) + totalMaterials;
 
             return {
-                INVOICE_NUMBER: invoiceNumber, // Use the calculated number
+                INVOICE_NUMBER: invoiceNumber,
                 INVOICE_DATE: today.toLocaleDateString('en-GB'),
                 TOTAL: (totalLabourGross + totalMaterials).toFixed(2),
                 LABOUR: totalLabourGross.toFixed(2),
@@ -841,7 +827,6 @@
         }
 
         function getClientData(clientKey) {
-            // clientKey is expected to be uppercase (FRESHBUILD or SALTASH)
             const data = CLIENT_DATA[clientKey];
             if (!data) {
                 throw new Error(`Client data not found for key: ${clientKey}`);
@@ -861,11 +846,9 @@
         }
 
         window.generateDocxInvoice = async function (clientKey, data) {
-            // Use the correct, single template file name
             const templateFileName = `ClientInvoiceBlank.docx`;
 
             try {
-                // Use the uppercase key to look up client data (address/name)
                 const clientInfo = getClientData(clientKey.toUpperCase());
 
                 const dataToInject = {
@@ -873,7 +856,6 @@
                     ...clientInfo
                 };
 
-                // Output file name remains client-specific (e.g., Freshbuild_Invoice_...)
                 const outputFileName = `${dataToInject.INVOICE_NUMBER}.docx`;
 
                 const content = await loadTemplateBinary(templateFileName);
@@ -901,7 +883,7 @@
                 console.error(`DOCX Generation Error for ${clientKey}:`, error);
                 let errorMessage = `Failed to generate ${clientKey} invoice: ${error.message}`;
                 if (error.message.includes("Failed to load template")) {
-                    errorMessage = `CRITICAL ERROR: Failed to load the single template (${templateFileName}). Please ensure the file is uploaded and named correctly.`;
+                    errorMessage = `CRITICAL ERROR: Failed to load the single template (${templateFileName}). Please ensure the file is uploaded and named correctly and that you are running on a local server (e.g., Python's http.server).`;
                 } else if (error.properties) {
                     errorMessage = `Docxtemplater Error in template. Tag: ${error.properties.tag}, Part: ${error.properties.part}. CRITICAL: Check your Word template for hidden formatting (Content Controls) and spaces in tags.`;
                 } else if (error.message.includes("Client data not found")) {
@@ -926,7 +908,6 @@
                 return;
             }
 
-            // IMPORTANT: Wait for invoice numbers to be loaded before proceeding
             if (!areInvoiceNumbersLoaded) {
                 alert("Invoice numbers are still loading from the database. Please wait a moment and try again.");
                 return;
@@ -937,47 +918,35 @@
             let docxSuccessCount = 0;
             let xlsxExportedCount = 0;
 
-            // Invoice number placeholders
             let freshbuildInvoiceNumber = '';
             let saltashInvoiceNumber = '';
-
 
             // 1. Check for Financial Year Reset
             const newMajorNumber = getMajorInvoiceNumber(INVOICE_MAJOR_NUMBER);
             const resetMinors = newMajorNumber !== INVOICE_MAJOR_NUMBER;
 
-            // Update major number globally (for this session)
             INVOICE_MAJOR_NUMBER = newMajorNumber;
 
-            // Use current/reset minor numbers
             let currentFreshbuildMinor = resetMinors ? 0 : freshbuildLastMinor;
             let currentSaltashMinor = resetMinors ? 0 : saltashLastMinor;
 
-            // Increment for the FIRST invoice of the sequence
-            // NOTE: This logic assumes that if Freshbuild exports, Saltash's minor number must also be accounted for,
-            // which happens inside the if blocks to prevent unused increments.
-
-            // Track the minor numbers that should be saved if successful
             let nextFreshbuildMinor = currentFreshbuildMinor;
             let nextSaltashMinor = currentSaltashMinor;
 
 
             const peabodyJobs = jobsToExport.filter(job => job.isPeabody);
-            const saltashJobs = jobsToExport.filter(job => !job.isPeabody); // ALL jobs that are NOT Peabody
+            const saltashJobs = jobsToExport.filter(job => !job.isPeabody);
 
 
             // 2. FRESHBUILD (Peabody jobs)
             if (peabodyJobs.length > 0) {
-                // Increment Freshbuild Minor
                 currentFreshbuildMinor += 1;
 
-                // Format: FB_26.01 
                 freshbuildInvoiceNumber = `FB_${INVOICE_MAJOR_NUMBER}.${String(currentFreshbuildMinor).padStart(2, '0')}`;
                 const freshbuildData = aggregateInvoiceData(peabodyJobs, freshbuildInvoiceNumber);
 
                 if (await window.generateDocxInvoice('Freshbuild', freshbuildData)) {
                     docxSuccessCount++;
-                    // Only update the nextMinor if generation was successful
                     nextFreshbuildMinor = currentFreshbuildMinor;
                 }
             } else {
@@ -987,16 +956,13 @@
 
             // 3. SALTASH (Non-Peabody jobs)
             if (saltashJobs.length > 0) {
-                // Increment Saltash Minor
                 currentSaltashMinor += 1;
 
-                // Format: 26.01
                 saltashInvoiceNumber = `${INVOICE_MAJOR_NUMBER}.${String(currentSaltashMinor).padStart(2, '0')}`;
                 const saltashData = aggregateInvoiceData(saltashJobs, saltashInvoiceNumber);
 
                 if (await window.generateDocxInvoice('Saltash', saltashData)) {
                     docxSuccessCount++;
-                    // Only update the nextMinor if generation was successful
                     nextSaltashMinor = currentSaltashMinor;
                 }
             } else {
@@ -1024,7 +990,7 @@
                 xlsxExportedCount++;
             }
 
-            // Re-render to update the numbers on the UI for subsequent exports (if any)
+            // Re-render to update the numbers on the UI
             renderJobs();
 
             // --- Final Alert ---
