@@ -1,1 +1,112 @@
-<!-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Personal Propbar</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .glass { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen pb-20">
+
+    <nav class="bg-white border-b p-4 mb-8 shadow-sm">
+        <div class="max-w-4xl mx-auto flex justify-between items-center">
+            <h1 class="font-bold text-xl text-blue-600">PropFinder <span class="text-slate-400 text-sm font-normal">GitHub Edition</span></h1>
+        </div>
+    </nav>
+
+    <div class="max-w-4xl mx-auto px-4">
+        <div class="bg-white p-6 rounded-3xl shadow-xl mb-8">
+            <h2 class="text-2xl font-bold mb-4">Property Sold History</h2>
+            <div class="flex gap-2">
+                <input id="postcode" type="text" placeholder="Enter Postcode (e.g. SW1A 1AA)" 
+                       class="flex-1 border-2 border-slate-100 rounded-2xl px-4 py-3 outline-none focus:border-blue-500 transition-all uppercase">
+                <button onclick="searchProperty()" class="bg-blue-600 text-white px-8 py-3 rounded-2xl font-bold hover:bg-blue-700 transition-all">
+                    Search
+                </button>
+            </div>
+            <p id="status" class="text-sm text-slate-500 mt-3"></p>
+        </div>
+
+        <div class="bg-white rounded-3xl shadow-sm border overflow-hidden">
+            <table class="w-full text-left">
+                <thead class="bg-slate-50 border-b">
+                    <tr>
+                        <th class="p-4 font-bold text-slate-600">Address</th>
+                        <th class="p-4 font-bold text-slate-600">Date Sold</th>
+                        <th class="p-4 font-bold text-slate-600 text-right">Price</th>
+                    </tr>
+                </thead>
+                <tbody id="results-body">
+                    <tr>
+                        <td colspan="3" class="p-10 text-center text-slate-400 italic">Enter a postcode to pull Land Registry data...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        async function searchProperty() {
+            const postcode = document.getElementById('postcode').value.trim().toUpperCase();
+            const status = document.getElementById('status');
+            const tbody = document.getElementById('results-body');
+
+            if (!postcode) return alert("Please enter a postcode");
+
+            status.innerText = "Connecting to Land Registry...";
+            tbody.innerHTML = `<tr><td colspan="3" class="p-10 text-center">Loading data...</td></tr>`;
+
+            // SPARQL Query for Land Registry
+            const query = `
+                PREFIX lrppi: <http://landregistry.data.gov.uk/def/ppi/>
+                PREFIX lrcommon: <http://landregistry.data.gov.uk/def/common/>
+                SELECT ?amount ?date ?street ?paon WHERE {
+                    ?addr lrcommon:postcode "${postcode}" .
+                    ?transx lrppi:propertyAddress ?addr ;
+                            lrppi:pricePaid ?amount ;
+                            lrppi:transactionDate ?date .
+                    OPTIONAL {?addr lrcommon:street ?street}
+                    OPTIONAL {?addr lrcommon:paon ?paon}
+                } ORDER BY DESC(?date) LIMIT 20`;
+
+            const url = `https://landregistry.data.gov.uk/landregistry/query?query=${encodeURIComponent(query)}&output=json`;
+
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                const results = data.results.bindings;
+
+                if (results.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="3" class="p-10 text-center text-red-500">No data found for this postcode.</td></tr>`;
+                    status.innerText = "";
+                    return;
+                }
+
+                tbody.innerHTML = "";
+                results.forEach(row => {
+                    const date = new Date(row.date.value).toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: 'numeric' });
+                    const price = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP' }).format(row.amount.value);
+                    const address = `${row.paon.value} ${row.street ? row.street.value : ''}`;
+
+                    tbody.innerHTML += `
+                        <tr class="border-b hover:bg-slate-50 transition-colors">
+                            <td class="p-4 font-medium">${address}</td>
+                            <td class="p-4 text-slate-500">${date}</td>
+                            <td class="p-4 text-right font-bold text-blue-600">${price}</td>
+                        </tr>
+                    `;
+                });
+                status.innerText = `Found ${results.length} recent sales.`;
+
+            } catch (error) {
+                console.error(error);
+                status.innerText = "Error fetching data. Check your connection.";
+                tbody.innerHTML = `<tr><td colspan="3" class="p-10 text-center text-red-500">API Error. The Land Registry server might be down.</td></tr>`;
+            }
+        }
+    </script>
+</body>
+</html>
