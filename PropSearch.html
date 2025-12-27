@@ -3,148 +3,266 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PropAnalyzer | Personal Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <title>Property Tracker Pro - Colored Pins</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', sans-serif;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #sidebar {
+            width: 360px;
+            background: #fff;
+            border-right: 1px solid #ddd;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+            z-index: 1001;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            background: #2c3e50;
+            color: white;
+        }
+
+        #property-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+            background: #fdfdfd;
+        }
+
+        .property-card {
+            background: white;
+            padding: 15px;
+            margin-bottom: 12px;
+            border-radius: 8px;
+            border: 1px solid #eee;
+            transition: all 0.2s;
+            cursor: pointer;
+            position: relative;
+        }
+
+            .property-card:hover {
+                border-color: #3498db;
+            }
+
+        .status-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: white;
+            margin-bottom: 5px;
+        }
+
+        #map {
+            flex: 1;
+            position: relative;
+        }
+
+        .popup-form {
+            width: 220px;
+        }
+
+            .popup-form input, .popup-form select {
+                width: 100%;
+                padding: 8px;
+                margin-bottom: 8px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                box-sizing: border-box;
+            }
+
+        .btn-save {
+            background: #27ae60;
+            color: white;
+            border: none;
+            padding: 10px;
+            width: 100%;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .btn-edit-small {
+            background: none;
+            border: none;
+            color: #3498db;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 0;
+            margin-top: 5px;
+        }
+
+        .addr-loading {
+            font-size: 11px;
+            color: #999;
+            font-style: italic;
+            display: block;
+            margin-bottom: 5px;
+        }
+    </style>
 </head>
-<body class="bg-slate-50 min-h-screen pb-20 font-sans text-slate-900">
+<body>
 
-    <nav class="bg-white border-b sticky top-0 z-50 p-4 shadow-sm">
-        <div class="max-w-5xl mx-auto flex justify-between items-center">
-            <div class="flex items-center gap-2">
-                <div class="bg-blue-600 text-white p-2 rounded-lg"><i class="fas fa-home"></i></div>
-                <h1 class="font-black text-xl tracking-tighter italic">PROP<span class="text-blue-600">ANALYSER</span></h1>
-            </div>
-            <span class="text-xs font-bold text-slate-400 bg-slate-100 px-3 py-1 rounded-full uppercase">Personal Edition</span>
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h2 style="margin:0">My Properties</h2>
+            <p style="margin:5px 0 0 0; font-size:12px; opacity:0.8">Click map to pin / Click card to edit</p>
         </div>
-    </nav>
-
-    <div class="max-w-5xl mx-auto px-4 mt-8">
-        <div class="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-100 mb-8 transition-all">
-            <h2 class="text-3xl font-black mb-6">Market Insight <span class="text-blue-600">Search</span></h2>
-            <div class="flex flex-col md:flex-row gap-3">
-                <input id="postcode" type="text" placeholder="Enter Postcode (e.g. SW1A 1AA)" 
-                       class="flex-1 border-2 border-slate-100 rounded-2xl px-6 py-4 outline-none focus:border-blue-500 text-lg uppercase font-bold">
-                <button onclick="runAnalysis()" class="bg-blue-600 text-white px-10 py-4 rounded-2xl font-black text-lg hover:bg-blue-700 hover:scale-[1.02] active:scale-95 transition-all shadow-lg shadow-blue-200">
-                    ANALYZE
-                </button>
-            </div>
-            <p id="status" class="text-sm font-medium text-slate-400 mt-4 px-2"></p>
-        </div>
-
-        <div id="dashboard" class="hidden">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <div class="bg-blue-600 p-6 rounded-[2rem] text-white shadow-lg">
-                    <h3 class="font-bold text-blue-100 uppercase text-xs tracking-widest mb-4">Live Market</h3>
-                    <div class="flex flex-col gap-3">
-                        <a id="link-rm" target="_blank" class="bg-white/10 hover:bg-white/20 p-4 rounded-xl flex justify-between items-center border border-white/10 transition-all">
-                            <span class="font-bold">Rightmove Listings</span>
-                            <i class="fas fa-external-link-alt text-xs"></i>
-                        </a>
-                        <a id="link-zp" target="_blank" class="bg-white/10 hover:bg-white/20 p-4 rounded-xl flex justify-between items-center border border-white/10 transition-all">
-                            <span class="font-bold">Zoopla Listings</span>
-                            <i class="fas fa-external-link-alt text-xs"></i>
-                        </a>
-                    </div>
-                </div>
-
-                <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
-                    <h3 class="font-bold text-slate-400 uppercase text-xs tracking-widest mb-4">Avg Sold Price</h3>
-                    <p id="avg-price" class="text-4xl font-black text-slate-800">£0</p>
-                    <p class="text-sm text-emerald-500 font-bold mt-2"><i class="fas fa-chart-line mr-1"></i> Based on last 20 sales</p>
-                </div>
-
-                <div class="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100">
-                    <h3 class="font-bold text-slate-400 uppercase text-xs tracking-widest mb-4">True Area Link</h3>
-                    <p class="text-sm text-slate-600 mb-4">Get exact floor area and energy specs for properties in this postcode.</p>
-                    <a id="link-epc" target="_blank" class="block text-center bg-slate-900 text-white font-bold py-3 rounded-xl hover:bg-slate-800 transition-all">
-                        View EPC Register
-                    </a>
-                </div>
-            </div>
-
-            <div class="bg-white rounded-[2rem] shadow-sm border border-slate-100 overflow-hidden">
-                <div class="p-6 border-b border-slate-50 flex justify-between items-center bg-slate-50/50">
-                    <h3 class="font-black text-xl">Land Registry <span class="text-blue-600">History</span></h3>
-                </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse">
-                        <thead>
-                            <tr class="text-slate-400 text-xs uppercase tracking-widest">
-                                <th class="p-6 font-bold">Property Address</th>
-                                <th class="p-6 font-bold">Date Sold</th>
-                                <th class="p-6 font-bold text-right">Price Paid</th>
-                            </tr>
-                        </thead>
-                        <tbody id="results-body"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
+        <div id="property-list"></div>
     </div>
 
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+
     <script>
-        async function runAnalysis() {
-            const postcode = document.getElementById('postcode').value.trim().toUpperCase();
-            const dash = document.getElementById('dashboard');
-            const status = document.getElementById('status');
-            const tbody = document.getElementById('results-body');
+        const map = L.map('map').setView([52.48, -1.89], 6);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+        L.Control.geocoder({ defaultMarkGeocode: true }).addTo(map);
 
-            if (!postcode) return;
+        let pins = JSON.parse(localStorage.getItem('prop_tracker_v7')) || [];
+        let editingId = null;
 
-            status.innerText = "⚡ Generating report for " + postcode + "...";
-            dash.classList.remove('hidden');
-
-            // Set Portal Links
-            document.getElementById('link-rm').href = `https://www.rightmove.co.uk/property-for-sale/find.html?searchLocation=${postcode}`;
-            document.getElementById('link-zp').href = `https://www.zoopla.co.uk/for-sale/houses/${postcode}/`;
-            document.getElementById('link-epc').href = `https://www.epcregister.com/direct/report/${postcode.replace(' ', '')}`;
-
-            // SPARQL Land Registry Query
-            const query = `
-                PREFIX lrppi: <http://landregistry.data.gov.uk/def/ppi/>
-                PREFIX lrcommon: <http://landregistry.data.gov.uk/def/common/>
-                SELECT ?amount ?date ?street ?paon WHERE {
-                    ?addr lrcommon:postcode "${postcode}" .
-                    ?transx lrppi:propertyAddress ?addr ;
-                            lrppi:pricePaid ?amount ;
-                            lrppi:transactionDate ?date .
-                    OPTIONAL {?addr lrcommon:street ?street}
-                    OPTIONAL {?addr lrcommon:paon ?paon}
-                } ORDER BY DESC(?date) LIMIT 20`;
-
-            try {
-                const response = await fetch(`https://landregistry.data.gov.uk/landregistry/query?query=${encodeURIComponent(query)}&output=json`);
-                const data = await response.json();
-                const results = data.results.bindings;
-
-                if (results.length > 0) {
-                    const sum = results.reduce((acc, curr) => acc + parseFloat(curr.amount.value), 0);
-                    const avg = Math.round(sum / results.length);
-                    document.getElementById('avg-price').innerText = "£" + avg.toLocaleString();
-
-                    tbody.innerHTML = results.map(row => `
-                        <tr class="border-b border-slate-50 hover:bg-slate-50/80 transition-all">
-                            <td class="p-6 font-bold text-slate-800 text-sm">
-                                <i class="fas fa-map-marker-alt text-slate-300 mr-2"></i>
-                                ${row.paon.value} ${row.street ? row.street.value : ''}
-                            </td>
-                            <td class="p-6 text-slate-400 text-sm font-medium">
-                                ${new Date(row.date.value).toLocaleDateString('en-GB', {year:'numeric', month:'short', day:'numeric'})}
-                            </td>
-                            <td class="p-6 text-right font-black text-blue-600">
-                                £${parseInt(row.amount.value).toLocaleString()}
-                            </td>
-                        </tr>
-                    `).join('');
-                } else {
-                    tbody.innerHTML = `<tr><td colspan="3" class="p-20 text-center font-bold text-slate-300">No sold data available for this postcode.</td></tr>`;
-                }
-                status.innerText = "✓ Analysis Complete";
-            } catch (error) {
-                status.innerText = "⚠ Land Registry API is temporarily busy. Please try again.";
+        // Function to get color based on status
+        function getStatusColor(status) {
+            switch (status) {
+                case "Viewing Set": return "#f39c12"; // Orange
+                case "Offer Made": return "#27ae60"; // Green
+                case "Rejected": return "#e74c3c"; // Red
+                default: return "#3498db"; // Blue (Shortlisted)
             }
         }
+
+        map.on('click', function (e) {
+            editingId = null;
+            showForm(e.latlng.lat, e.latlng.lng);
+        });
+
+        async function showForm(lat, lng, existingData = null) {
+            const popupContent = document.createElement('div');
+            popupContent.className = 'popup-form';
+            popupContent.innerHTML = `
+                    <span id="load-msg" class="addr-loading">${existingData ? 'Editing Mode' : '🔍 Finding address...'}</span>
+                    <input type="text" id="pop-addr" placeholder="Address" value="${existingData?.address || ''}">
+                    <input type="text" id="pop-price" placeholder="Price" value="${existingData?.price || ''}">
+                    <select id="pop-status">
+                        <option value="Shortlisted" ${existingData?.status === 'Shortlisted' ? 'selected' : ''}>Shortlisted</option>
+                        <option value="Viewing Set" ${existingData?.status === 'Viewing Set' ? 'selected' : ''}>Viewing Set</option>
+                        <option value="Offer Made" ${existingData?.status === 'Offer Made' ? 'selected' : ''}>Offer Made</option>
+                        <option value="Rejected" ${existingData?.status === 'Rejected' ? 'selected' : ''}>Rejected</option>
+                    </select>
+                    <input type="text" id="pop-url" placeholder="Link" value="${existingData?.url || ''}">
+                    <button class="btn-save" id="save-btn">${existingData ? 'Update Property' : 'Save to List'}</button>
+                `;
+
+            const popup = L.popup().setLatLng([lat, lng]).setContent(popupContent).openOn(map);
+
+            if (!existingData) {
+                try {
+                    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`);
+                    const data = await res.json();
+                    if (data.address) {
+                        const street = data.address.road || "";
+                        const house = data.address.house_number || "";
+                        const postcode = data.address.postcode || "";
+                        document.getElementById('pop-addr').value = `${house} ${street}, ${postcode}`.trim();
+                        document.getElementById('load-msg').innerText = "Address found:";
+                    }
+                } catch (err) { document.getElementById('load-msg').innerText = "Manual address:"; }
+            }
+
+            document.getElementById('save-btn').onclick = () => saveData(lat, lng);
+        }
+
+        function saveData(lat, lng) {
+            let priceVal = document.getElementById('pop-price').value.trim();
+            if (priceVal && !priceVal.startsWith('£')) priceVal = '£' + priceVal;
+
+            const data = {
+                id: editingId || Date.now(),
+                lat, lng,
+                address: document.getElementById('pop-addr').value || "Unnamed",
+                price: priceVal || "£-",
+                status: document.getElementById('pop-status').value,
+                url: document.getElementById('pop-url').value || "#"
+            };
+
+            if (editingId) {
+                const index = pins.findIndex(p => p.id === editingId);
+                pins[index] = data;
+            } else {
+                pins.push(data);
+            }
+
+            localStorage.setItem('prop_tracker_v7', JSON.stringify(pins));
+            map.closePopup();
+            render();
+        }
+
+        window.editProperty = function (id) {
+            const p = pins.find(pin => pin.id === id);
+            editingId = id;
+            map.setView([p.lat, p.lng], 17);
+            showForm(p.lat, p.lng, p);
+        };
+
+        window.deletePin = function (e, id) {
+            e.stopPropagation();
+            if (confirm("Delete this property?")) {
+                pins = pins.filter(p => p.id !== id);
+                localStorage.setItem('prop_tracker_v7', JSON.stringify(pins));
+                render();
+            }
+        };
+
+        function render() {
+            // Clear all markers
+            map.eachLayer(l => { if (l instanceof L.CircleMarker) map.removeLayer(l); });
+            const list = document.getElementById('property-list');
+            list.innerHTML = '';
+
+            pins.forEach((p) => {
+                const color = getStatusColor(p.status);
+
+                // Add CIRCLE MARKER instead of default pin
+                L.circleMarker([p.lat, p.lng], {
+                    radius: 10,
+                    fillColor: color,
+                    color: "#fff",
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.9
+                }).addTo(map)
+                    .bindPopup(`<b>${p.address}</b><br>${p.price}<br><button class="btn-edit-small" onclick="editProperty(${p.id})">Edit Details</button>`);
+
+                const card = document.createElement('div');
+                card.className = 'property-card';
+                card.onclick = () => editProperty(p.id);
+                card.innerHTML = `
+                        <span class="status-tag" style="background:${color}">${p.status}</span>
+                        <button onclick="deletePin(event, ${p.id})" style="float:right; background:none; border:none; color:#ccc; cursor:pointer; font-size:20px;">&times;</button>
+                        <h4>${p.address}</h4>
+                        <p style="font-weight:bold; color:#2c3e50; margin:0">${p.price}</p>
+                    `;
+                list.appendChild(card);
+            });
+        }
+
+        render();
     </script>
 </body>
 </html>
