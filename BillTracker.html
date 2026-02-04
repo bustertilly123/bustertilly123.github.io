@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Bill Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .modal-overlay { background-color: rgba(15, 23, 42, 0.7); backdrop-filter: blur(8px); }
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-track { background: #f1f5f9; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        
+        /* Mobile-first bottom drawer for notes */
+        @media (max-width: 1024px) {
+            .notes-sidebar {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                z-index: 40;
+                border-radius: 24px 24px 0 0;
+                transform: translateY(calc(100% - 60px));
+                transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            }
+            .notes-sidebar.open { transform: translateY(0); }
+        }
+
+        /* Prevent body scroll when modal open */
+        .modal-open { overflow: hidden; }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-900 pb-20 lg:pb-0">
+
+    <div class="max-w-[1400px] mx-auto px-4 py-6 lg:py-10">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl lg:text-4xl font-black text-slate-800 tracking-tight mb-2">BILL CALENDAR</h1>
+            <div class="bg-white px-5 py-2 rounded-full shadow-sm border border-slate-200 inline-flex items-center gap-3">
+                <span class="text-slate-400 font-bold uppercase text-[9px] tracking-widest">Total:</span>
+                <span id="grandTotal" class="text-lg font-black text-blue-600">£0.00</span>
+            </div>
+        </header>
+
+        <div class="flex flex-col lg:flex-row gap-6">
+            
+            <div class="flex-grow order-1 lg:order-1">
+                <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-7 gap-3 lg:gap-4" id="grid"></div>
+                
+                <div class="mt-8 mb-10 text-center">
+                    <button onclick="clearAll()" class="text-[10px] font-bold text-slate-300 hover:text-red-500 uppercase tracking-widest transition">Wipe Data</button>
+                </div>
+            </div>
+
+            <div id="notesSidebar" class="notes-sidebar w-full lg:w-80 shrink-0 bg-white shadow-[0_-10px_25px_-5px_rgba(0,0,0,0.1)] lg:shadow-sm border border-slate-200 p-6 order-2">
+                <div class="lg:hidden w-12 h-1.5 bg-slate-200 rounded-full mx-auto mb-4 cursor-pointer" onclick="toggleNotes()"></div>
+                
+                <div class="flex justify-between items-center mb-4 cursor-pointer lg:cursor-default" onclick="toggleNotes()">
+                    <h3 class="text-lg font-black text-slate-800 flex items-center gap-2">
+                        <span>📝</span> NOTES
+                    </h3>
+                    <span class="lg:hidden text-blue-600 font-bold text-xs uppercase" id="toggleText">Tap to Open</span>
+                </div>
+                
+                <textarea 
+                    id="notesArea" 
+                    onkeydown="handleNoteKeys(event)"
+                    oninput="saveNotes()"
+                    placeholder="Type notes..."
+                    class="w-full h-[300px] lg:h-[600px] p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition text-sm text-slate-600 leading-relaxed custom-scroll"
+                ></textarea>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 modal-overlay" onclick="handleBackdrop(event)">
+        <div class="bg-white w-full max-w-lg rounded-[2rem] shadow-2xl overflow-hidden transform transition-all max-h-[90vh] flex flex-col">
+            <div class="p-6 lg:p-8 overflow-y-auto custom-scroll">
+                <div class="flex justify-between items-start mb-6">
+                    <div>
+                        <h2 class="text-2xl lg:text-3xl font-black text-slate-800" id="modalTitle">Day Details</h2>
+                        <p class="text-slate-400 text-xs font-medium uppercase tracking-wide">Manage Bills</p>
+                    </div>
+                    <button onclick="closeModal()" class="bg-slate-100 text-slate-400 w-10 h-10 rounded-full flex items-center justify-center text-2xl hover:bg-slate-200 transition">&times;</button>
+                </div>
+
+                <div class="flex flex-col gap-3 mb-8">
+                    <input type="text" id="billName" placeholder="Bill Name (e.g. Rent)" class="w-full bg-slate-50 px-5 py-4 rounded-2xl border border-slate-200 outline-none focus:border-blue-500 transition text-base">
+                    <div class="flex gap-2">
+                        <input type="number" id="billAmount" placeholder="£ Amount" class="flex-grow bg-slate-50 px-5 py-4 rounded-2xl border border-slate-200 outline-none focus:border-blue-500 transition text-base">
+                        <button onclick="addBill()" class="bg-blue-600 text-white px-6 py-4 rounded-2xl font-bold hover:bg-blue-700 active:scale-95 transition">Add</button>
+                    </div>
+                </div>
+
+                <div class="space-y-3" id="modalList"></div>
+
+                <div class="mt-8 pt-6 border-t border-slate-100 flex justify-between items-center sticky bottom-0 bg-white">
+                    <span class="font-bold text-slate-400 uppercase text-[10px] tracking-widest">Day Total</span>
+                    <span id="modalTotal" class="text-2xl font-black text-blue-600">£0.00</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let bills = JSON.parse(localStorage.getItem('mobileBillTrackerData')) || {};
+        let activeDay = null;
+
+        // Mobile Note Toggle
+        function toggleNotes() {
+            const sidebar = document.getElementById('notesSidebar');
+            const toggleText = document.getElementById('toggleText');
+            sidebar.classList.toggle('open');
+            toggleText.innerText = sidebar.classList.contains('open') ? 'Close' : 'Tap to Open';
+        }
+
+        function renderGrid() {
+            const grid = document.getElementById('grid');
+            grid.innerHTML = '';
+            let totalMonth = 0;
+
+            for (let i = 1; i <= 31; i++) {
+                const dayBills = bills[i] || [];
+                const dayTotal = dayBills.reduce((sum, b) => sum + parseFloat(b.amount || 0), 0);
+                totalMonth += dayTotal;
+                
+                const card = document.createElement('div');
+                card.className = "bg-white p-4 lg:p-5 rounded-2xl border border-slate-200 shadow-sm active:scale-95 transition-all flex flex-col items-center text-center cursor-pointer";
+                card.onclick = () => openModal(i);
+                
+                card.innerHTML = `
+                    <span class="text-2xl lg:text-3xl font-black ${dayTotal > 0 ? 'text-blue-600' : 'text-slate-200'} mb-1">${i}</span>
+                    <span class="text-[9px] text-slate-400 font-bold uppercase tracking-widest">${dayBills.length} Bills</span>
+                    ${dayTotal > 0 ? `<div class="text-xs font-black text-slate-700 mt-1">£${dayTotal.toFixed(0)}</div>` : ''}
+                `;
+                grid.appendChild(card);
+            }
+            document.getElementById('grandTotal').innerText = `£${totalMonth.toFixed(2)}`;
+        }
+
+        function handleNoteKeys(e) {
+            const el = e.target;
+            if (el.value === '') el.value = '• ';
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const start = el.selectionStart;
+                el.value = el.value.substring(0, start) + "\n• " + el.value.substring(el.selectionEnd);
+                el.selectionStart = el.selectionEnd = start + 3;
+            }
+        }
+
+        function saveNotes() { localStorage.setItem('mobileBillNotes', document.getElementById('notesArea').value); }
+        function loadNotes() { document.getElementById('notesArea').value = localStorage.getItem('mobileBillNotes') || '• '; }
+
+        function openModal(day) {
+            activeDay = day;
+            document.getElementById('modalTitle').innerText = `Day ${day}`;
+            document.getElementById('modal').classList.remove('hidden');
+            document.body.classList.add('modal-open');
+            renderModalList();
+        }
+
+        function closeModal() {
+            document.getElementById('modal').classList.add('hidden');
+            document.body.classList.remove('modal-open');
+            activeDay = null;
+        }
+
+        function handleBackdrop(e) { if(e.target.id === 'modal') closeModal(); }
+
+        function renderModalList() {
+            const list = document.getElementById('modalList');
+            const dayBills = bills[activeDay] || [];
+            list.innerHTML = dayBills.length ? '' : '<p class="text-slate-300 italic text-center py-10 text-sm font-medium">No bills added for this day.</p>';
+            
+            let total = 0;
+            dayBills.forEach((b, idx) => {
+                total += parseFloat(b.amount || 0);
+                list.innerHTML += `
+                    <div class="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                        <div>
+                            <div class="font-bold text-slate-800 text-sm">${b.name}</div>
+                            <div class="text-xs text-blue-600 font-bold uppercase">£${parseFloat(b.amount).toFixed(2)}</div>
+                        </div>
+                        <button onclick="deleteBill(${idx})" class="w-8 h-8 flex items-center justify-center text-slate-300 hover:text-red-500 text-xl">&times;</button>
+                    </div>
+                `;
+            });
+            document.getElementById('modalTotal').innerText = `£${total.toFixed(2)}`;
+        }
+
+        function addBill() {
+            const name = document.getElementById('billName').value;
+            const amount = document.getElementById('billAmount').value;
+            if (name && amount) {
+                if (!bills[activeDay]) bills[activeDay] = [];
+                bills[activeDay].push({ name, amount });
+                save();
+                document.getElementById('billName').value = '';
+                document.getElementById('billAmount').value = '';
+                renderModalList();
+            }
+        }
+
+        function deleteBill(index) {
+            bills[activeDay].splice(index, 1);
+            save();
+            renderModalList();
+        }
+
+        function save() {
+            localStorage.setItem('mobileBillTrackerData', JSON.stringify(bills));
+            renderGrid();
+        }
+
+        function clearAll() { if(confirm("Clear all bill data?")) { bills = {}; save(); } }
+
+        window.onkeydown = (e) => { if(e.key === "Escape") closeModal(); };
+
+        loadNotes();
+        renderGrid();
+    </script>
+</body>
+</html>
