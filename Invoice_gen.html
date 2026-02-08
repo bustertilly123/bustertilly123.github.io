@@ -3,247 +3,1116 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Manager</title>
+    <title>Job Manager (Cloud Shared)</title>
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+
     <script src="https://cdn.tailwindcss.com"></script>
 
     <style>
         .input-field {
+            /* Tailwind classes for width, padding, shadow, and focus */
             @apply mt-1 block w-full p-3 rounded-lg shadow-xl focus:ring-indigo-500 focus:border-indigo-500;
-            border: 3px solid #000000;
+            border: 3px solid #000000; /* Distinct Black Border for form elements */
             width: 100%;
         }
-        input[type="radio"] { border: 2px solid #000000; }
+
+        input[type="radio"] {
+            border: 2px solid #000000;
+        }
+
+        /* Styling to prevent rotation on details open */
         .jobs-container:not([style*="display: none"]) + .week-group .rotate-180 {
             transform: rotate(0deg) !important;
         }
     </style>
 
     <script type="module">
+        // ===============================================
+        // SECTION 0: DOCX & UTILITY IMPORTS
+        // ===============================================
         import PizZip from "https://esm.sh/pizzip@3.1.6";
         import Docxtemplater from "https://esm.sh/docxtemplater";
         import saveAs from "https://esm.sh/file-saver";
 
+        // Import necessary Firebase modules
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import {
-            getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence
+            getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import {
-            getFirestore, doc, setDoc, getDoc, getDocs, collection, query, orderBy, limit, deleteDoc
+            getFirestore, doc, setDoc, onSnapshot, collection, query, deleteDoc, setLogLevel
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
+        setLogLevel('debug');
+
         // ==========================================================
-        // SECTION 1: CONSTANTS & GLOBAL STATE
+        // SECTION 1: CONSTANTS & GLOBAL STATE (PERSISTENCE ENABLED)
         // ==========================================================
-        const LABOUR_TAX_RATE = 0.20;
-        const LABOUR_AFTER_TAX_MULTIPLIER = 1 - LABOUR_TAX_RATE;
+
+        const LABOUR_TAX_RATE = 0.20; // 20% reduction applied to labour price
+        const LABOUR_AFTER_TAX_MULTIPLIER = 1 - LABOUR_TAX_RATE; // 0.80
+
         const DB_COLLECTION = 'jobs';
         const INVOICE_NUMBERS_DOC_PATH = 'invoice_config/current_numbers';
 
-        let app, db, auth;
+        let app;
+        let db;
+        let auth;
         let userId = null;
         let allJobs = [];
         let isAuthReady = false;
+        let areInvoiceNumbersLoaded = false;
 
-        let INVOICE_MAJOR_NUMBER = 25;
+        // --- INVOICE NUMBERING STATE ---
+        let INVOICE_MAJOR_NUMBER = 0;
         let saltashLastMinor = 0;
         let freshbuildLastMinor = 0;
+        // -------------------------------
 
-        const FIREBASE_CONFIG = {
-            apiKey: "AIzaSyAX7GYX247S69b6blLBcja-_IHU6Y9i3hI",
-            authDomain: "tools-9bf35.firebaseapp.com",
-            projectId: "tools-9bf35",
-            storageBucket: "tools-9bf35.firebasestorage.app",
-            messagingSenderId: "803649385600",
-            appId: "1:803649385600:web:79fc8ed25d35ebdf032265"
-        };
 
-        const appId = FIREBASE_CONFIG.projectId;
+        // --- CONFIGURATION: Your credentials are now inserted here. ---
+        //
+        const FIREBASE_CONFIG = (function () {
+            if (typeof __firebase_config !== 'undefined') {
+                try {
+                    return JSON.parse(__firebase_config);
+                } catch (e) {
+                    console.error("Canvas Firebase config parse error:", e);
+                    return {};
+                }
+            }
 
-        // Restore Client Address Data
+            return {
+                apiKey: "AIzaSyAX7GYX247S69b6blLBcja-_IHU6Y9i3hI",
+                authDomain: "tools-9bf35.firebaseapp.com",
+                projectId: "tools-9bf35",
+                storageBucket: "tools-9bf35.firebasestorage.app",
+                messagingSenderId: "803649385600",
+                appId: "1:803649385600:web:79fc8ed25d35ebdf032265"
+            };
+        })();
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : FIREBASE_CONFIG.projectId || 'default-app-id';
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // --- CLIENT ADDRESS DATA ---
         const CLIENT_DATA = {
-            FRESHBUILD: { name: 'FRESHBUILD LIMITED', address: 'SHALIMER, CRICKET GROUND RD\nCHISLEHURST\nKENT\nBR7 5HD' },
-            SALTASH: { name: 'SALTASH ENTERPRISES LIMITED', address: '110- 116 ORMSIDE STREET\nLONDON, SE15 1TF' }
+            FRESHBUILD: {
+                name: 'FRESHBUILD LIMITED',
+                address: 'SHALIMER, CRICKET GROUND RD\nCHISLEHURST\nKENT\nBR7 5HD'
+            },
+            SALTASH: {
+                name: 'SALTASH ENTERPRISES LIMITED',
+                address: '110- 116 ORMSIDE STREET\nLONDON, SE15 1TF'
+            }
         };
+
 
         // ==========================================================
-        // SECTION 2: OPTIMIZED FIREBASE LOGIC
+        // SECTION 2: FIREBASE INITIALIZATION & AUTH
         // ==========================================================
 
         function getJobsCollectionRef() {
-            const path = `artifacts/${appId}/public/data/${DB_COLLECTION}`;
-            // OPTIMIZATION: Limits reads to the 50 most recent jobs
-            return query(collection(db, path), orderBy("date", "desc"), limit(50));
+            const collectionPath = `artifacts/${appId}/public/data/${DB_COLLECTION}`;
+            return collection(db, collectionPath);
+        }
+
+        function getInvoiceConfigDocRef() {
+            const docPath = `artifacts/${appId}/public/data/${INVOICE_NUMBERS_DOC_PATH}`;
+            return doc(db, docPath);
         }
 
         async function initFirebase() {
             const statusDisplay = document.getElementById('authStatus');
-            try {
-                app = initializeApp(FIREBASE_CONFIG);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                await setPersistence(auth, browserLocalPersistence);
+            const loadingIndicator = document.getElementById('loadingIndicator');
 
-                onAuthStateChanged(auth, async (user) => {
+            if (!FIREBASE_CONFIG || !FIREBASE_CONFIG.projectId) {
+                statusDisplay.textContent = 'CRITICAL ERROR: Firebase configuration missing.';
+                loadingIndicator.style.display = 'none';
+                return;
+            }
+
+            try {
+                if (!app) {
+                    app = initializeApp(FIREBASE_CONFIG);
+                    db = getFirestore(app);
+                    auth = getAuth(app);
+                    await setPersistence(auth, browserLocalPersistence);
+                }
+
+                statusDisplay.textContent = 'Authenticating...';
+                loadingIndicator.style.display = 'block';
+
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
                     if (user) {
                         userId = user.uid;
-                        statusDisplay.textContent = `Status: Authenticated`;
+                        statusDisplay.textContent = `Status: Authenticated (User ID: ${userId.substring(0, 8)}...)`;
+
                         if (!isAuthReady) {
                             isAuthReady = true;
-                            await loadInitialData();
+                            setupRealTimeListener();
                         }
+                    } else {
+                        statusDisplay.textContent = `Error: Authentication failed.`;
+                        loadingIndicator.style.display = 'none';
                     }
                 });
-                await signInAnonymously(auth);
+
             } catch (error) {
-                statusDisplay.textContent = `Error: ${error.message}`;
+                console.error("Firebase Initialization or Auth Error:", error.message, error);
+                loadingIndicator.style.display = 'none';
+                statusDisplay.textContent = `Error: Initialization failed (${error.code || error.message}).`;
             }
         }
 
-        async function loadInitialData() {
-            const loadingIndicator = document.getElementById('loadingIndicator');
-            loadingIndicator.style.display = 'block';
+        function setupRealTimeListener() {
+            if (!userId) return;
+            setupInvoiceNumberListener();
+        }
 
-            try {
-                // Fetch Invoice Config Once (Optimization)
-                const configRef = doc(db, `artifacts/${appId}/public/data/${INVOICE_NUMBERS_DOC_PATH}`);
-                const configSnap = await getDoc(configRef);
-                if (configSnap.exists()) {
-                    const data = configSnap.data();
+        function setupInvoiceNumberListener() {
+            onSnapshot(getInvoiceConfigDocRef(), (docSnapshot) => {
+                const data = docSnapshot.data();
+
+                if (data) {
                     INVOICE_MAJOR_NUMBER = data.majorNumber || 25;
                     freshbuildLastMinor = data.freshbuildMinor || 0;
                     saltashLastMinor = data.saltashMinor || 0;
+                } else {
+                    console.log("Invoice config not found, using defaults and will initialize upon first save.");
+                    INVOICE_MAJOR_NUMBER = 25;
+                    freshbuildLastMinor = 0;
+                    saltashLastMinor = 0;
                 }
 
-                // Fetch Jobs Once (Optimization)
-                const jobsSnap = await getDocs(getJobsCollectionRef());
-                allJobs = jobsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                
-                renderJobs();
-            } catch (error) {
-                console.error("Data Load Error:", error);
-            } finally {
+                if (!areInvoiceNumbersLoaded) {
+                    areInvoiceNumbersLoaded = true;
+                    setupJobsListener();
+                } else {
+                    renderJobs();
+                }
+
+            }, (error) => {
+                console.error("Error setting up invoice number listener:", error);
+                document.getElementById('authStatus').textContent = `Error loading config: ${error.message}`;
+            });
+        }
+
+        function setupJobsListener() {
+            const jobsQuery = query(getJobsCollectionRef());
+            const loadingIndicator = document.getElementById('loadingIndicator');
+
+            onSnapshot(jobsQuery, (snapshot) => {
+                allJobs = [];
+                snapshot.forEach((doc) => {
+                    allJobs.push({ id: doc.id, ...doc.data() });
+                });
                 loadingIndicator.style.display = 'none';
+                renderJobs();
+            }, (error) => {
+                console.error("Error setting up real-time listener:", error);
+                loadingIndicator.style.display = 'none';
+                document.getElementById('authStatus').textContent = `Error loading data: ${error.message}`;
+            });
+        }
+
+
+        // ==========================================================
+        // SECTION 3: UTILITIES & CALCULATIONS
+        // ==========================================================
+
+        function formatCurrency(value) {
+            const num = parseFloat(value);
+            if (isNaN(num)) return '£0.00';
+            return '£' + num.toFixed(2);
+        }
+
+        function calculateNetJobCost(job) {
+
+            const rawLabour = job.labourPrice;
+            const rawMaterial = job.materialPrice;
+
+            const labour = parseFloat(rawLabour) || 0;
+            const material = parseFloat(rawMaterial) || 0;
+
+            const labourAfterTax = labour * LABOUR_AFTER_TAX_MULTIPLIER;
+
+            return {
+                grossLabour: labour,
+                netLabour: labourAfterTax,
+                material: material,
+                totalNet: labourAfterTax + material
+            };
+        }
+
+        function getWeekStartDate(dateString) {
+            if (!dateString) return 'Unscheduled';
+
+            const date = new Date(dateString + 'T00:00:00');
+            const day = date.getDay();
+            const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+
+            const monday = new Date(date.setDate(diff));
+
+            return monday.toISOString().split('T')[0];
+        }
+
+        function formatWeekRange(dateString) {
+            if (dateString === 'Unscheduled') return 'Unscheduled Jobs';
+
+            const start = new Date(dateString + 'T00:00:00');
+            const end = new Date(start);
+            end.setDate(start.getDate() + 6);
+
+            const formatter = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+            return `Week of ${formatter.format(start)} – ${formatter.format(end)}`;
+        }
+
+        window.handleRadioClick = function (event) {
+            const radio = event.target;
+            const wasCheckedBeforeClick = radio.wasCheckedBeforeClick;
+            radio.wasCheckedBeforeClick = radio.checked;
+
+            if (wasCheckedBeforeClick) {
+                radio.checked = false;
+                radio.wasCheckedBeforeClick = false;
+            }
+        };
+
+        /**
+         * Checks the current date to determine if a financial year reset is needed.
+         * The financial year starts on April 1st.
+         */
+        function getMajorInvoiceNumber(currentMajorNumber) {
+            const now = new Date();
+            const currentMonth = now.getMonth();
+            const currentYear = now.getFullYear();
+
+            let expectedMajorNumber;
+            if (currentMonth < 3) {
+                expectedMajorNumber = (currentYear - 1) % 100;
+            } else {
+                expectedMajorNumber = currentYear % 100;
+            }
+
+            if (currentMajorNumber < expectedMajorNumber) {
+                console.warn(`Financial year reset detected! Major number advancing from ${currentMajorNumber} to ${expectedMajorNumber}. Minor numbers will reset to .01.`);
+                return expectedMajorNumber;
+            }
+
+            return currentMajorNumber;
+        }
+
+        /**
+         * Saves the current invoice numbers to the Firestore database for persistence.
+         */
+        async function saveInvoiceNumbers(major, freshbuildMinor, saltashMinor) {
+            if (!isAuthReady || !userId) return;
+            try {
+                const configData = {
+                    majorNumber: major,
+                    freshbuildMinor: freshbuildMinor,
+                    saltashMinor: saltashMinor
+                };
+                await setDoc(getInvoiceConfigDocRef(), configData, { merge: true });
+                console.log("Successfully saved new invoice numbers to Firestore.");
+                return true;
+            } catch (e) {
+                console.error("Error saving invoice numbers:", e);
+                alert(`CRITICAL: Failed to save invoice numbers to database! Please save manually. Error: ${e.message}`);
+                return false;
+            }
+        }
+
+
+        // ==========================================================
+        // SECTION 4: RENDERING & DISPLAY LOGIC (FIXED SEQUENTIAL DISPLAY & MOBILE)
+        // ==========================================================
+
+        function createJobCardHtml(job) {
+            const costs = calculateNetJobCost(job);
+            const jobTypeDisplay = job.isHackney ? '<span class="text-blue-600 font-bold ml-2">Hackney</span>' :
+                (job.isPeabody ? '<span class="text-red-600 font-bold ml-2">Peabody</span>' : 'Other');
+
+            return `
+                    <div id="job-${job.id}" class="job-card bg-gray-50 p-5 rounded-lg shadow-sm border border-gray-100">
+                        <div class="flex justify-between items-start mb-3">
+                            <h3 class="text-xl font-bold text-gray-900">${job.title}</h3>
+                            <span class="text-sm font-medium text-gray-600">Completed: ${job.dateCompleted || 'N/A'}</span>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 text-sm text-gray-700 border-b pb-2">
+                            <div><span class="font-semibold text-gray-600">Labour Before Tax:</span> ${formatCurrency(costs.grossLabour)}</div>
+                            <div><span class="font-semibold text-gray-600">Labour After Tax:</span> ${formatCurrency(costs.netLabour)}</div>
+                            <div><span class="font-semibold text-gray-600">Material Cost:</span> ${formatCurrency(costs.material)}</div>
+                            <div class="col-span-2 border-t pt-2 mt-1 font-bold text-base text-indigo-700">
+                                <span class="font-semibold text-gray-600">TOTAL COST:</span> ${formatCurrency(costs.totalNet)}
+                            </div>
+                        </div>
+
+                        <div class="mb-4 text-sm font-medium pt-3">
+                            <span class="font-semibold text-gray-600">Job Type:</span> ${jobTypeDisplay}
+                        </div>
+
+                        <p class="text-gray-600 mb-4 pt-1">
+                            <span class="font-semibold text-gray-600 block mb-1">Description:</span>
+                            ${job.description || 'No detailed description provided.'}
+                        </p>
+
+                        <div class="flex justify-between items-center text-sm text-gray-500 border-t pt-3">
+                            <span>Created: ${new Date(job.timestamp).toLocaleDateString()}</span>
+                            <div class="flex items-center space-x-2">
+                                <button onclick="editJob('${job.id}')" class="text-indigo-600 hover:text-indigo-800 font-semibold transition">Edit</button>
+
+                                <button onclick="deleteJob('${job.id}')" class="text-red-500 hover:text-red-700 transition ml-2">
+                                    <svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+        }
+
+        window.renderJobs = function () {
+            const jobListContainer = document.getElementById('jobList');
+            jobListContainer.innerHTML = '';
+
+            const searchTerm = document.getElementById('jobSearch').value.toLowerCase().trim();
+
+            const filteredJobs = searchTerm
+                ? allJobs.filter(job =>
+                    [job.title, job.description, formatCurrency(job.labourPrice), formatCurrency(job.materialPrice)]
+                        .join(' ').toLowerCase().includes(searchTerm))
+                : allJobs;
+
+            if (filteredJobs.length === 0) {
+                jobListContainer.innerHTML = `<p class="text-center text-gray-500 py-10">${searchTerm ? 'No jobs match your search criteria.' : 'No jobs found. Use the form above to add one!'}</p>`;
+                return;
+            }
+
+            const groupedJobs = filteredJobs.reduce((acc, job) => {
+                const weekStartDate = getWeekStartDate(job.dateCompleted);
+                if (!acc[weekStartDate]) acc[weekStartDate] = [];
+                acc[weekStartDate].push(job);
+                return acc;
+            }, {});
+
+            // 1. This list is sorted DESCENDING (NEWEST First) for display order.
+            const displayGroupKeys = Object.keys(groupedJobs).sort((a, b) => {
+                if (a === 'Unscheduled') return 1;
+                if (b === 'Unscheduled') return -1;
+                return new Date(b) - new Date(a);
+            });
+
+            // 2. This list is sorted ASCENDING (OLDEST First) for correct numbering order.
+            const numberingGroupKeys = Object.keys(groupedJobs).sort((a, b) => {
+                if (a === 'Unscheduled') return 1;
+                if (b === 'Unscheduled') return -1;
+                return new Date(a) - new Date(b);
+            });
+
+            // 3. Check for Financial Year Reset logic
+            const currentMajor = getMajorInvoiceNumber(INVOICE_MAJOR_NUMBER);
+            const minorResetNeeded = currentMajor !== INVOICE_MAJOR_NUMBER;
+
+            // 4. Initialize temporary minor counters for sequential display
+            let tempSaltashMinor = minorResetNeeded ? 0 : saltashLastMinor;
+            let tempFreshbuildMinor = minorResetNeeded ? 0 : freshbuildLastMinor;
+
+            const weekInvoiceMap = {};
+
+            // 5. Loop over the OLDEST first array to calculate and map the correct invoice numbers.
+            numberingGroupKeys.forEach(weekStartDate => {
+                const weekJobs = groupedJobs[weekStartDate];
+
+                const peabodyJobs = weekJobs.filter(job => job.isPeabody);
+                const saltashJobs = weekJobs.filter(job => !job.isPeabody);
+
+                let freshbuildInvoiceNumber = null;
+                let saltashInvoiceNumber = null;
+
+                if (peabodyJobs.length > 0) {
+                    tempFreshbuildMinor += 1;
+                    freshbuildInvoiceNumber = `FB_${currentMajor}.${String(tempFreshbuildMinor).padStart(2, '0')}`;
+                }
+
+                if (saltashJobs.length > 0) {
+                    tempSaltashMinor += 1;
+                    saltashInvoiceNumber = `${currentMajor}.${String(tempSaltashMinor).padStart(2, '0')}`;
+                }
+
+                weekInvoiceMap[weekStartDate] = { freshbuild: freshbuildInvoiceNumber, saltash: saltashInvoiceNumber };
+            });
+
+            // 6. Loop over the NEWEST first array for rendering the job list on the screen.
+            displayGroupKeys.forEach(weekStartDate => {
+                const weekJobs = groupedJobs[weekStartDate].sort((a, b) => b.timestamp - a.timestamp);
+                const weekTitle = formatWeekRange(weekStartDate);
+
+                const peabodyJobs = weekJobs.filter(job => job.isPeabody);
+                const saltashJobs = weekJobs.filter(job => !job.isPeabody);
+
+                // --- Calculate Totals ---
+                const freshbuildTotal = peabodyJobs.reduce((sum, job) => sum + calculateNetJobCost(job).totalNet, 0);
+                const saltashTotal = saltashJobs.reduce((sum, job) => sum + calculateNetJobCost(job).totalNet, 0);
+                const totalWeekCost = freshbuildTotal + saltashTotal;
+
+                let totalDisplay = `<span class="text-xl font-bold ml-4">Total: ${formatCurrency(totalWeekCost)}</span>`;
+
+                let splitTotals = [];
+                if (freshbuildTotal > 0) splitTotals.push(`Freshbuild: ${formatCurrency(freshbuildTotal)}`);
+                if (saltashTotal > 0) splitTotals.push(`Saltash: ${formatCurrency(saltashTotal)}`);
+                let splitTotalsDisplay = splitTotals.length > 0 ? `<span class="text-sm border-l border-indigo-500 pl-4 ml-4">${splitTotals.join(' | ')}</span>` : '';
+
+
+                // --- Get Calculated Invoice Numbers from the Map ---
+                const invoiceNumbers = weekInvoiceMap[weekStartDate] || {};
+                let invoiceParts = [];
+
+                if (invoiceNumbers.freshbuild) {
+                    invoiceParts.push(`Freshbuild: ${invoiceNumbers.freshbuild}`);
+                }
+
+                if (invoiceNumbers.saltash) {
+                    invoiceParts.push(`Saltash: ${invoiceNumbers.saltash}`);
+                }
+
+                let invoiceDisplay = '';
+                if (invoiceParts.length > 0) {
+                    const displayString = invoiceParts.join(' | ');
+                    invoiceDisplay = `<span class="text-base ml-4 border-l border-indigo-500 pl-4 font-medium">${displayString}</span>`;
+                }
+                // --- End Invoice Number Calculation ---
+
+
+                const groupElement = document.createElement('div');
+                groupElement.className = 'week-group mb-6';
+
+                groupElement.innerHTML = `
+                        <div class="flex items-center bg-indigo-600 text-white rounded-t-xl shadow-md">
+                            <button id="toggle-${weekStartDate}"
+                                    class="flex-1 flex justify-between items-start sm:items-center p-4 hover:bg-indigo-700 transition"
+                                    onclick="toggleWeekDisplay('${weekStartDate}')" aria-expanded="true">
+                                
+                                <div class="flex-1 min-w-0">
+                                    <span class="text-lg sm:text-xl font-semibold block sm:inline">${weekTitle} (${weekJobs.length} Jobs)</span>
+                                    
+                                    <div class="flex flex-col sm:flex-row sm:items-center mt-2 sm:mt-0"> 
+                                        
+                                        ${invoiceDisplay.replace('ml-4 border-l border-indigo-500 pl-4', 'mt-1 sm:ml-4 sm:border-l sm:border-indigo-500 sm:pl-4')}
+                                        
+                                        ${splitTotalsDisplay.replace('ml-4 border-l border-indigo-500 pl-4', 'mt-1 sm:ml-4 sm:border-l sm:border-indigo-500 sm:pl-4')}
+                                        
+                                        ${totalDisplay.replace('ml-4', 'mt-1 sm:ml-4')}
+                                    </div>
+                                </div>
+
+                                <svg id="arrow-${weekStartDate}" class="w-6 h-6 transform transition-transform duration-300 ml-4 sm:ml-0 flex-shrink-0 mt-2 sm:mt-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                            </button>
+                            <button onclick="exportWeekData('${weekStartDate}')"
+                                    class="bg-green-600 h-full px-4 py-4 rounded-tr-xl hover:bg-green-700 transition text-sm font-bold border-l border-indigo-500">
+                                Export Week
+                            </button>
+                        </div>
+                        <div id="jobs-${weekStartDate}" class="jobs-container space-y-4 p-4 bg-white border border-t-0 border-gray-200 rounded-b-xl">
+                            </div>
+                    `;
+
+                jobListContainer.appendChild(groupElement);
+
+                const container = document.getElementById(`jobs-${weekStartDate}`);
+                weekJobs.forEach(job => container.insertAdjacentHTML('beforeend', createJobCardHtml(job)));
+
+                const shouldCollapse = (weekStartDate !== 'Unscheduled' && !searchTerm);
+                if (shouldCollapse) {
+                    container.style.display = 'none';
+                    document.getElementById(`arrow-${weekStartDate}`).classList.add('rotate-180');
+                }
+            });
+        }
+
+        window.toggleWeekDisplay = function (weekStartDate) {
+            const container = document.getElementById(`jobs-${weekStartDate}`);
+            const arrow = document.getElementById(`arrow-${weekStartDate}`);
+            const isVisible = container.style.display !== 'none';
+
+            container.style.display = isVisible ? 'none' : 'block';
+            arrow.classList.toggle('rotate-180', !isVisible);
+        }
+
+        // ==========================================================
+        // SECTION 5: CRUD OPERATIONS
+        // ==========================================================
+
+        window.addJob = async function (event) {
+            event.preventDefault();
+
+            if (!isAuthReady || !userId) return;
+
+            const form = event.target;
+            const jobTypeRadios = form.elements['jobType'];
+            const selectedJobType = Array.from(jobTypeRadios).find(radio => radio.checked)?.value;
+
+            const title = form.elements['jobAddress'].value.trim();
+            if (!title) return;
+
+            const jobData = {
+                title,
+                address: title,
+                description: form.elements['jobDescription'].value.trim(),
+                labourPrice: parseFloat(form.elements['labourPrice'].value) || 0,
+                materialPrice: parseFloat(form.elements['materialPrice'].value) || 0,
+                isHackney: selectedJobType === 'hackney',
+                isPeabody: selectedJobType === 'peabody',
+                dateCompleted: form.elements['dateCompleted'].value.trim(),
+                timestamp: Date.now()
+            };
+
+            try {
+                await setDoc(doc(getJobsCollectionRef()), jobData);
+                form.reset();
+                Array.from(jobTypeRadios).forEach(radio => radio.wasCheckedBeforeClick = false);
+            } catch (e) {
+                console.error("Error adding document: ", e);
+                document.getElementById('authStatus').textContent = `Error adding job: ${e.message}`;
+            }
+        }
+
+        window.deleteJob = async function (id) {
+            if (!isAuthReady || !userId) return;
+            try {
+                await deleteDoc(doc(getJobsCollectionRef(), id));
+            } catch (e) {
+                console.error("Error deleting job: ", e);
+                document.getElementById('authStatus').textContent = `Error deleting job: ${e.message}`;
+            }
+        }
+
+        window.editJob = function (id) {
+            const job = allJobs.find(j => j.id === id);
+            if (!job) return;
+
+            const cardElement = document.getElementById(`job-${id}`);
+            const checkedValue = job.isHackney ? 'hackney' : (job.isPeabody ? 'peabody' : null);
+
+            const editFormHtml = `
+                    <form id="editForm-${id}" class="space-y-4" onsubmit="saveEdit(event, '${id}')">
+                        <div><label for="editAddress-${id}" class="block text-sm font-medium text-gray-700">Job Address</label><input type="text" id="editAddress-${id}" required class="input-field" value="${job.address}"></div>
+                        <div class="mb-4"><label for="editDateCompleted-${id}" class="block text-sm font-medium text-gray-700">Date Completed</label><input type="date" id="editDateCompleted-${id}" class="input-field" value="${job.dateCompleted || ''}"></div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div><label for="editLabourPrice-${id}" class="block text-sm font-medium text-gray-700">Labour Price (£)</label><input type="number" id="editLabourPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.labourPrice || ''}"></div>
+                            <div><label for="editMaterialPrice-${id}" class="block text-sm font-medium text-gray-700">Material Price (£)</label><input type="number" id="editMaterialPrice-${id}" step="0.01" placeholder="0.00" class="input-field" value="${job.materialPrice || ''}"></div>
+                        </div>
+                        <div><label for="editDescription-${id}" class="block text-sm font-medium text-gray-700">Description</label><textarea id="editDescription-${id}" rows="3" class="input-field">${job.description || ''}</textarea></div>
+
+                        <div class="space-y-2"><span class="block text-sm font-medium text-gray-700">Job Type:</span>
+                            <div class="flex flex-col sm:flex-row sm:space-x-6 space-y-2 sm:space-y-0">
+                                <div class="flex items-center">
+                                    <input id="editIsHackney-${id}" type="radio" name="editJobType-${id}" value="hackney" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'hackney' ? 'checked' : ''} onclick="handleRadioClick(event)">
+                                    <label for="editIsHackney-${id}" class="ml-2 block text-sm font-medium text-gray-700">Hackney</label>
+                                </div>
+                                <div class="flex items-center">
+                                    <input id="editIsPeabody-${id}" type="radio" name="editJobType-${id}" value="peabody" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" ${checkedValue === 'peabody' ? 'checked' : ''} onclick="handleRadioClick(event)">
+                                    <label for="editIsPeabody-${id}" class="ml-2 block text-sm font-medium text-gray-700">Peabody</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex space-x-3 pt-2">
+                            <button type="submit" class="flex-1 bg-green-600 text-white font-bold py-2 rounded-lg shadow-md hover:bg-green-700 transition">Save Changes</button>
+                            <button type="button" onclick="renderJobs()" class="flex-1 bg-gray-300 text-gray-800 font-bold py-2 rounded-lg shadow-md hover:bg-gray-400 transition">Cancel</button>
+                        </div>
+                    </form>`;
+
+            cardElement.innerHTML = editFormHtml;
+
+            const hackneyInput = document.getElementById(`editIsHackney-${id}`);
+            const peabodyInput = document.getElementById(`editIsPeabody-${id}`);
+            if (hackneyInput) hackneyInput.wasCheckedBeforeClick = hackneyInput.checked;
+            if (peabodyInput) peabodyInput.wasCheckedBeforeClick = peabodyInput.checked;
+        }
+
+        window.saveEdit = async function (event, id) {
+            event.preventDefault();
+            if (!isAuthReady || !userId) return;
+
+            const form = document.getElementById(`editForm-${id}`);
+            const selectedJobType = document.querySelector(`input[name="editJobType-${id}"]:checked`)?.value || '';
+
+            const updatedData = {
+                title: form.elements[`editAddress-${id}`].value.trim(),
+                address: form.elements[`editAddress-${id}`].value.trim(),
+                description: form.elements[`editDescription-${id}`].value.trim(),
+                labourPrice: parseFloat(form.elements[`editLabourPrice-${id}`].value) || 0,
+                materialPrice: parseFloat(form.elements[`editMaterialPrice-${id}`].value) || 0,
+                isHackney: selectedJobType === 'hackney',
+                isPeabody: selectedJobType === 'peabody',
+                dateCompleted: form.elements[`editDateCompleted-${id}`].value.trim(),
+            };
+
+            try {
+                await setDoc(doc(getJobsCollectionRef(), id), updatedData, { merge: true });
+            } catch (e) {
+                console.error("Error saving edit:", e);
+                document.getElementById('authStatus').textContent = `Error saving job: ${e.message}`;
             }
         }
 
         // ==========================================================
-        // SECTION 3: RESTORED ORIGINAL CORE FUNCTIONS
+        // SECTION 6: XLSX EXPORT LOGIC (SheetJS)
         // ==========================================================
 
-        window.formatCurrency = (value) => '£' + (parseFloat(value) || 0).toFixed(2);
+        const generateXLSX = function (jobs, type, weekStartDate, invoiceNumber) {
+            if (jobs.length === 0) return;
 
-        window.calculateNetJobCost = (job) => {
-            const labour = parseFloat(job.labourPrice) || 0;
-            const material = parseFloat(job.materialPrice) || 0;
-            const labourAfterTax = labour * LABOUR_AFTER_TAX_MULTIPLIER;
-            return { totalNet: labourAfterTax + material, labourAfterTax, material };
-        };
+            const excelData = jobs.map(job => {
+                const costs = calculateNetJobCost(job);
 
-        window.getWeekStartDate = (dateString) => {
-            if (!dateString) return 'Unscheduled';
-            const date = new Date(dateString + 'T00:00:00');
-            const day = date.getDay();
-            const diff = date.getDate() - day + (day === 0 ? -6 : 1);
-            return new Date(date.setDate(diff)).toISOString().split('T')[0];
-        };
+                return {
+                    Address: job.title,
+                    Code: "",
+                    Labour: costs.grossLabour,
+                    Materials: costs.material,
+                    Description: job.description
+                };
+            });
 
-        window.addJob = async function(event) {
-            event.preventDefault();
-            const form = event.target;
-            const newJob = {
-                client: form.client.value,
-                date: form.date.value,
-                description: form.description.value,
-                labourPrice: parseFloat(form.labourPrice.value) || 0,
-                materialPrice: parseFloat(form.materialPrice.value) || 0,
-                createdAt: new Date().toISOString()
+            const headers = ["Address", "Code", "Labour", "Materials", "Description"];
+
+            const worksheet = XLSX.utils.json_to_sheet(excelData, {
+                header: headers,
+                skipHeader: false
+            });
+
+            if (!worksheet['!ref']) {
+                console.warn(`Worksheet reference is missing after data mapping for ${type} jobs.`);
+                return;
+            }
+
+            let range = XLSX.utils.decode_range(worksheet['!ref']);
+            const currencyFormat = '£#,##0.00';
+
+            const setCellText = (ws, c, r, text) => {
+                const cellRef = XLSX.utils.encode_cell({ c: c, r: r });
+                ws[cellRef] = { v: text, t: 's' };
             };
 
+            let totalLabourSum = 0;
+            let totalMaterialsSum = 0;
+
+            for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+                const labourCellRef = XLSX.utils.encode_cell({ c: 2, r: R });
+                const labourCell = worksheet[labourCellRef];
+
+                if (labourCell) {
+                    worksheet[labourCellRef].z = currencyFormat;
+                    totalLabourSum += (parseFloat(labourCell.v) || 0);
+                }
+
+                const materialCellRef = XLSX.utils.encode_cell({ c: 3, r: R });
+                const materialCell = worksheet[materialCellRef];
+
+                if (materialCell) {
+                    worksheet[materialCellRef].z = currencyFormat;
+                    totalMaterialsSum += (parseFloat(materialCell.v) || 0);
+                }
+            }
+
+
+            const titleRowIndex = range.e.r + 2;
+            const valueRowIndex = range.e.r + 3;
+
+            const finalTotalSum = totalLabourSum + totalMaterialsSum;
+
+            setCellText(worksheet, 2, titleRowIndex, 'Total Labour');
+            setCellText(worksheet, 3, titleRowIndex, 'Total Materials');
+            setCellText(worksheet, 4, titleRowIndex, 'Final Total');
+
+            setCellText(worksheet, 0, valueRowIndex, 'GRAND TOTALS');
+
+            const labourValueRef = XLSX.utils.encode_cell({ c: 2, r: valueRowIndex });
+            worksheet[labourValueRef] = { t: 'n', v: totalLabourSum, z: currencyFormat };
+
+            const materialValueRef = XLSX.utils.encode_cell({ c: 3, r: valueRowIndex });
+            worksheet[materialValueRef] = { t: 'n', v: totalMaterialsSum, z: currencyFormat };
+
+            const finalTotalValueRef = XLSX.utils.encode_cell({ c: 4, r: valueRowIndex });
+            worksheet[finalTotalValueRef] = { t: 'n', v: finalTotalSum, z: currencyFormat };
+
+            range.e.r = valueRowIndex;
+            worksheet['!ref'] = XLSX.utils.encode_range(range);
+
+
+            const wscols = headers.map(header => {
+                let maxLen = header.length;
+                const colIndex = headers.indexOf(header);
+
+                for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+                    const cellRef = XLSX.utils.encode_cell({ c: colIndex, r: R });
+                    const cell = worksheet[cellRef];
+
+                    if (cell && cell.v !== null && cell.v !== undefined) {
+                        let len = String(cell.v).length;
+
+                        if (cell.z && cell.z === currencyFormat && (header === 'Labour' || header === 'Materials' || header === 'Description')) {
+                            len = 10;
+                        } else if (cell.t === 's' && cell.v) {
+                            len = cell.v.length;
+                        } else if (cell.t === 'n' && cell.w) {
+                            len = cell.w.length;
+                        }
+
+                        if (len > maxLen) {
+                            maxLen = len;
+                        }
+                    } else if (cell && cell.t === 's' && cell.v) {
+                        if (cell.v.length > maxLen) {
+                            maxLen = cell.v.length;
+                        }
+                    }
+                }
+
+                return { wch: Math.min(maxLen + 2, 50) };
+            });
+
+            worksheet['!cols'] = wscols;
+
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, `Jobs`);
+
+            const safeInvoiceNumber = invoiceNumber.replace(/[^a-zA-Z0-9_]/g, '.');
+            const finalFileName = `${safeInvoiceNumber}.xlsx`;
+
+            XLSX.writeFile(workbook, finalFileName, { bookType: 'xlsx', type: 'base64' });
+        };
+
+
+        // ==========================================================
+        // SECTION 7: DOCX GENERATION LOGIC
+        // ==========================================================
+
+        function aggregateInvoiceData(jobsToAggregate, invoiceNumber) {
+            let totalLabourGross = 0;
+            let totalMaterials = 0;
+
+            const today = new Date();
+
+            jobsToAggregate.forEach(job => {
+                const costs = calculateNetJobCost(job);
+                totalLabourGross += costs.grossLabour;
+                totalMaterials += costs.material;
+            });
+
+            const taxAmount = totalLabourGross * LABOUR_TAX_RATE;
+            const totalLabourNet = totalLabourGross - taxAmount;
+            const totalInvoiceAmount = (totalLabourGross - taxAmount) + totalMaterials;
+
+            return {
+                INVOICE_NUMBER: invoiceNumber,
+                INVOICE_DATE: today.toLocaleDateString('en-GB'),
+                TOTAL: (totalLabourGross + totalMaterials).toFixed(2),
+                LABOUR: totalLabourGross.toFixed(2),
+                MATERIALS: totalMaterials.toFixed(2),
+                TAX: taxAmount.toFixed(2),
+                AFTER_TAX: totalInvoiceAmount.toFixed(2),
+            };
+        }
+
+        function getClientData(clientKey) {
+            const data = CLIENT_DATA[clientKey];
+            if (!data) {
+                throw new Error(`Client data not found for key: ${clientKey}`);
+            }
+            return {
+                CLIENT_NAME_FULL: data.name,
+                CLIENT_ADDRESS: data.address
+            };
+        }
+
+        async function loadTemplateBinary(filename) {
+            const response = await fetch(filename);
+            if (!response.ok) {
+                throw new Error(`Failed to load template: ${filename}. Status: ${response.status}`);
+            }
+            return response.arrayBuffer();
+        }
+
+        window.generateDocxInvoice = async function (clientKey, data) {
+            const templateFileName = `ClientInvoiceBlank.docx`;
+
             try {
-                const newDocRef = doc(collection(db, `artifacts/${appId}/public/data/${DB_COLLECTION}`));
-                await setDoc(newDocRef, newJob);
-                await loadInitialData(); // Refresh list once
-                form.reset();
-            } catch (e) {
-                alert("Error: " + e.message);
+                const clientInfo = getClientData(clientKey.toUpperCase());
+
+                const dataToInject = {
+                    ...data,
+                    ...clientInfo
+                };
+
+                const outputFileName = `${dataToInject.INVOICE_NUMBER}.docx`;
+
+                const content = await loadTemplateBinary(templateFileName);
+
+                const zip = new PizZip(content);
+                const doc = new Docxtemplater(zip, {
+                    paragraphLoop: true,
+                    linebreaks: true,
+                });
+
+                doc.render(dataToInject);
+
+                const out = doc.getZip().generate({
+                    type: "blob",
+                    mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    compression: "DEFLATE",
+                });
+
+                saveAs(out, outputFileName);
+
+                console.log(`Successfully generated: ${outputFileName}`);
+                return true;
+
+            } catch (error) {
+                console.error(`DOCX Generation Error for ${clientKey}:`, error);
+                let errorMessage = `Failed to generate ${clientKey} invoice: ${error.message}`;
+                if (error.message.includes("Failed to load template")) {
+                    errorMessage = `CRITICAL ERROR: Failed to load the single template (${templateFileName}). Please ensure the file is uploaded and named correctly and that you are running on a local server (e.g., Python's http.server).`;
+                } else if (error.properties) {
+                    errorMessage = `Docxtemplater Error in template. Tag: ${error.properties.tag}, Part: ${error.properties.part}. CRITICAL: Check your Word template for hidden formatting (Content Controls) and spaces in tags.`;
+                } else if (error.message.includes("Client data not found")) {
+                    errorMessage = `CRITICAL ERROR: Client key mismatch. Ensure client data object keys are consistent. Error: ${error.message}`;
+                }
+                alert(errorMessage);
+                return false;
             }
         };
 
-        window.deleteJob = async function(jobId) {
-            if (!confirm("Delete this job?")) return;
-            try {
-                await deleteDoc(doc(db, `artifacts/${appId}/public/data/${DB_COLLECTION}`, jobId));
-                allJobs = allJobs.filter(j => j.id !== jobId);
-                renderJobs();
-            } catch (e) {
-                alert("Error: " + e.message);
+
+        /**
+         * Handles the "Export Week" button click, generating both DOCX invoices for that week
+         * and then performing the XLSX export.
+         */
+        window.exportWeekData = async function (targetWeekStartDate) {
+
+            const jobsToExport = allJobs.filter(job => getWeekStartDate(job.dateCompleted) === targetWeekStartDate);
+
+            if (jobsToExport.length === 0) {
+                alert(`No jobs found for the week starting ${targetWeekStartDate} to export.`);
+                return;
             }
+
+            if (!areInvoiceNumbersLoaded) {
+                alert("Invoice numbers are still loading from the database. Please wait a moment and try again.");
+                return;
+            }
+
+
+            const weekRange = formatWeekRange(targetWeekStartDate);
+            let docxSuccessCount = 0;
+            let xlsxExportedCount = 0;
+
+            let freshbuildInvoiceNumber = '';
+            let saltashInvoiceNumber = '';
+
+            // 1. Check for Financial Year Reset
+            const newMajorNumber = getMajorInvoiceNumber(INVOICE_MAJOR_NUMBER);
+            const resetMinors = newMajorNumber !== INVOICE_MAJOR_NUMBER;
+
+            INVOICE_MAJOR_NUMBER = newMajorNumber;
+
+            let currentFreshbuildMinor = resetMinors ? 0 : freshbuildLastMinor;
+            let currentSaltashMinor = resetMinors ? 0 : saltashLastMinor;
+
+            let nextFreshbuildMinor = currentFreshbuildMinor;
+            let nextSaltashMinor = currentSaltashMinor;
+
+
+            const peabodyJobs = jobsToExport.filter(job => job.isPeabody);
+            const saltashJobs = jobsToExport.filter(job => !job.isPeabody);
+
+
+            // 2. FRESHBUILD (Peabody jobs)
+            if (peabodyJobs.length > 0) {
+                currentFreshbuildMinor += 1;
+
+                freshbuildInvoiceNumber = `FB_${INVOICE_MAJOR_NUMBER}.${String(currentFreshbuildMinor).padStart(2, '0')}`;
+                const freshbuildData = aggregateInvoiceData(peabodyJobs, freshbuildInvoiceNumber);
+
+                if (await window.generateDocxInvoice('Freshbuild', freshbuildData)) {
+                    docxSuccessCount++;
+                    nextFreshbuildMinor = currentFreshbuildMinor;
+                }
+            } else {
+                console.log('No Peabody jobs found for Freshbuild invoice.');
+            }
+
+
+            // 3. SALTASH (Non-Peabody jobs)
+            if (saltashJobs.length > 0) {
+                currentSaltashMinor += 1;
+
+                saltashInvoiceNumber = `${INVOICE_MAJOR_NUMBER}.${String(currentSaltashMinor).padStart(2, '0')}`;
+                const saltashData = aggregateInvoiceData(saltashJobs, saltashInvoiceNumber);
+
+                if (await window.generateDocxInvoice('Saltash', saltashData)) {
+                    docxSuccessCount++;
+                    nextSaltashMinor = currentSaltashMinor;
+                }
+            } else {
+                console.log('No non-Peabody jobs found for Saltash invoice.');
+            }
+
+
+            // 4. Update the global state with the successfully generated numbers
+            //freshbuildLastMinor = nextFreshbuildMinor;
+            //saltashLastMinor = nextSaltashMinor;
+
+
+            // -----------------------------------------------------
+            // --- XLSX Generation ---
+
+            const otherJobsForXLSX = saltashJobs;
+
+            if (peabodyJobs.length > 0) {
+                generateXLSX(peabodyJobs, 'Peabody', targetWeekStartDate, freshbuildInvoiceNumber);
+                xlsxExportedCount++;
+            }
+
+            if (otherJobsForXLSX.length > 0) {
+                generateXLSX(otherJobsForXLSX, 'Other', targetWeekStartDate, saltashInvoiceNumber);
+                xlsxExportedCount++;
+            }
+
+            // Re-render to update the numbers on the UI
+            renderJobs();
+
+            // --- Final Alert ---
+
+            let finalMessage = `Export complete for the week of ${weekRange}.\n\n`;
+            let saveSuccess = false;
+
+            if (docxSuccessCount > 0) {
+                // 5. Save the final successful invoice numbers to the database for persistence
+                saveSuccess = await saveInvoiceNumbers(INVOICE_MAJOR_NUMBER, freshbuildLastMinor, saltashLastMinor);
+
+                finalMessage += `DOCX Invoices Generated: ${docxSuccessCount} file(s) with new invoice numbers:\n`;
+                if (peabodyJobs.length > 0 && freshbuildInvoiceNumber) finalMessage += ` - Freshbuild: ${freshbuildInvoiceNumber}\n`;
+                if (saltashJobs.length > 0 && saltashInvoiceNumber) finalMessage += ` - Saltash: ${saltashInvoiceNumber}\n`;
+
+                if (saveSuccess) {
+                    finalMessage += `\n**SUCCESS:** New invoice numbers have been **automatically saved** to the database for persistence.`;
+                } else {
+                    finalMessage += `\n**ERROR:** Failed to automatically save new invoice numbers. Check the console for details and record the new numbers manually.`;
+                }
+            } else {
+                finalMessage += `DOCX Invoices: No jobs were exported, or template error occurred.\n`;
+            }
+
+            if (xlsxExportedCount > 0) {
+                finalMessage += `XLSX Reports Generated: ${xlsxExportedCount} file(s). Each file name now includes the corresponding invoice number.`;
+            } else {
+                finalMessage += `XLSX Reports: No jobs found for Peabody or Other report.`;
+            }
+
+            alert(finalMessage);
         };
 
-        // --- RENDER LOGIC (Restored Original Grouping) ---
-        window.renderJobs = function() {
-            const container = document.getElementById('jobsList');
-            const search = document.getElementById('jobSearch').value.toLowerCase();
-            
-            const filtered = allJobs.filter(j => 
-                j.client.toLowerCase().includes(search) || 
-                j.description.toLowerCase().includes(search)
-            );
 
-            // Group by Week Logic from original Invoice_gen.html
-            const groups = filtered.reduce((acc, job) => {
-                const week = window.getWeekStartDate(job.date);
-                if (!acc[week]) acc[week] = [];
-                acc[week].push(job);
-                return acc;
-            }, {});
+        // ==========================================================
+        // SECTION 8: INITIALIZATION
+        // ==========================================================
 
-            container.innerHTML = Object.keys(groups).sort().reverse().map(week => `
-                <div class="mb-6">
-                    <h3 class="font-bold text-lg mb-2">${week}</h3>
-                    ${groups[week].map(job => `
-                        <div class="p-4 bg-white border-2 border-black rounded-xl mb-2 flex justify-between items-center">
-                            <div>
-                                <p class="font-bold">${job.client}</p>
-                                <p class="text-sm text-gray-600">${job.description}</p>
-                            </div>
-                            <button onclick="deleteJob('${job.id}')" class="text-red-600 font-bold">Delete</button>
-                        </div>
-                    `).join('')}
-                </div>
-            `).join('');
+        window.onload = function () {
+            initFirebase();
+
+            const hackneyCreate = document.getElementById('jobType-hackney');
+            const peabodyCreate = document.getElementById('jobType-peabody');
+
+            if (hackneyCreate) hackneyCreate.wasCheckedBeforeClick = hackneyCreate.checked;
+            if (peabodyCreate) peabodyCreate.wasCheckedBeforeClick = peabodyCreate.checked;
         };
 
-        window.onload = initFirebase;
     </script>
 </head>
-<body class="bg-gray-50 p-6">
-    <div class="max-w-4xl mx-auto">
-        <div class="flex justify-between items-center mb-6">
-            <h1 class="text-3xl font-bold">Job Manager</h1>
-            <div id="authStatus" class="text-sm bg-white px-3 py-1 border border-black rounded-full">Auth...</div>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8">
+        <h1 class="text-3xl font-extrabold text-indigo-700 mb-2">Job Manager & Invoice Generator</h1>
+        <p id="authStatus" class="text-sm text-gray-600 mb-6">Status: Initializing...</p>
+
+        <div class="bg-white p-6 rounded-xl shadow-2xl mb-8 border-t-4 border-indigo-600">
+            <h2 class="text-2xl font-semibold text-gray-800 mb-4">Add New Job</h2>
+            <form id="addJobForm" onsubmit="addJob(event)" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="jobAddress" class="block text-sm font-medium text-gray-700">Job Address / Title</label>
+                        <input type="text" id="jobAddress" name="jobAddress" required class="input-field">
+                    </div>
+                    <div>
+                        <label for="dateCompleted" class="block text-sm font-medium text-gray-700">Date Completed</label>
+                        <input type="date" id="dateCompleted" name="dateCompleted" class="input-field">
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="labourPrice" class="block text-sm font-medium text-gray-700">Labour Price (£)</label>
+                        <input type="number" id="labourPrice" name="labourPrice" step="0.01" placeholder="0.00" class="input-field" value="">
+                    </div>
+                    <div>
+                        <label for="materialPrice" class="block text-sm font-medium text-gray-700">Material Price (£)</label>
+                        <input type="number" id="materialPrice" name="materialPrice" step="0.01" placeholder="0.00" class="input-field" value="">
+                    </div>
+                </div>
+
+                <div>
+                    <label for="jobDescription" class="block text-sm font-medium text-gray-700">Detailed Description</label>
+                    <textarea id="jobDescription" name="jobDescription" rows="3" class="input-field"></textarea>
+                </div>
+
+                <div class="space-y-2">
+                    <span class="block text-sm font-medium text-gray-700">Job Type (Required for invoicing):</span>
+                    <div class="flex space-x-6">
+                        <div class="flex items-center">
+                            <input id="jobType-hackney" type="radio" name="jobType" value="hackney" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" onclick="handleRadioClick(event)">
+                            <label for="jobType-hackney" class="ml-2 block text-sm font-medium text-gray-700">Hackney (Saltash)</label>
+                        </div>
+                        <div class="flex items-center">
+                            <input id="jobType-peabody" type="radio" name="jobType" value="peabody" class="h-4 w-4 text-indigo-600 focus:ring-indigo-500" onclick="handleRadioClick(event)">
+                            <label for="jobType-peabody" class="ml-2 block text-sm font-medium text-gray-700">Peabody (Freshbuild)</label>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 ease-in-out">Add Job</button>
+            </form>
         </div>
 
-        <div id="loadingIndicator" style="display:none;" class="mb-4 text-indigo-600 animate-pulse font-bold">Updating Data...</div>
+        <h2 class="text-2xl font-semibold text-gray-800 mb-4">Completed Jobs By Week</h2>
 
-        <form onsubmit="addJob(event)" class="bg-white p-6 rounded-2xl border-2 border-black shadow-xl mb-8">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                <input name="client" placeholder="Client Name" class="input-field" required>
-                <input name="date" type="date" class="input-field" required>
+        <div class="relative mb-6">
+            <input type="text" id="jobSearch" oninput="renderJobs()" placeholder="Search by address, description, or price..." class="input-field pl-10 bg-white">
+            <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
             </div>
-            <textarea name="description" placeholder="Work Description" class="input-field mb-4" required></textarea>
-            <div class="grid grid-cols-2 gap-4 mb-6">
-                <input name="labourPrice" type="number" step="0.01" placeholder="Labour £" class="input-field">
-                <input name="materialPrice" type="number" step="0.01" placeholder="Material £" class="input-field">
-            </div>
-            <button type="submit" class="w-full bg-black text-white p-4 rounded-xl font-bold hover:bg-gray-800">Add Job</button>
-        </form>
+        </div>
 
-        <input type="text" id="jobSearch" oninput="renderJobs()" placeholder="Search jobs..." class="input-field mb-6">
-        
-        <div id="jobsList"></div>
+        <div id="loadingIndicator" class="text-center py-8" style="display:none;">
+            <svg class="animate-spin h-8 w-8 text-indigo-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="text-sm text-indigo-500 mt-2">Loading job data...</p>
+        </div>
+
+        <div id="jobList" class="space-y-6">
+        </div>
+
     </div>
 </body>
 </html>
