@@ -325,15 +325,50 @@
         // SECTION 6: EXPORT (WORD + EXCEL)
         // ==========================================================
         window.generateXLSX = function (jobs, invNumber) {
-            const excelData = jobs.map(j => ({
-                Address: j.address,
-                Labour: j.labourPrice,
-                Materials: j.materialPrice,
-                Description: j.description
-            }));
+            // 1. Map data to the exact layout you had originally
+            const excelData = jobs.map(j => {
+                const costs = calculateNetJobCost(j);
+                return {
+                    "Address / Title": j.address || j.title,
+                    "Description": j.description || "",
+                    "Date Completed": j.dateCompleted || "",
+                    "Labour (Gross)": costs.grossLabour,
+                    "Materials": costs.material,
+                    "Total (Net)": costs.totalNet,
+                    "Job Type": j.isHackney ? "Hackney" : (j.isPeabody ? "Peabody" : "Other")
+                };
+            });
+
+            // 2. Create the worksheet and workbook
             const ws = XLSX.utils.json_to_sheet(excelData);
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Jobs");
+            XLSX.utils.book_append_sheet(wb, ws, "Weekly Jobs Report");
+
+            // 3. Set Column Widths for better readability
+            const wscols = [
+                { wch: 30 }, // Address
+                { wch: 40 }, // Description
+                { wch: 15 }, // Date
+                { wch: 15 }, // Labour
+                { wch: 15 }, // Materials
+                { wch: 15 }, // Total
+                { wch: 12 }  // Type
+            ];
+            ws['!cols'] = wscols;
+
+            // 4. Apply Currency Formatting to columns D, E, and F
+            const range = XLSX.utils.decode_range(ws['!ref']);
+            for (let R = range.s.r + 1; R <= range.e.r; ++R) {
+                const labourCell = ws[XLSX.utils.encode_cell({ c: 3, r: R })];
+                const materialCell = ws[XLSX.utils.encode_cell({ c: 4, r: R })];
+                const totalCell = ws[XLSX.utils.encode_cell({ c: 5, r: R })];
+
+                if (labourCell) labourCell.z = '£#,##0.00';
+                if (materialCell) materialCell.z = '£#,##0.00';
+                if (totalCell) totalCell.z = '£#,##0.00';
+            }
+
+            // 5. Save the file
             XLSX.writeFile(wb, `${invNumber}.xlsx`);
         };
 
