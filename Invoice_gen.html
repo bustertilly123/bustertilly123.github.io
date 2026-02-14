@@ -209,14 +209,13 @@
 
             sortedWeeks.forEach(week => {
                 const weekJobs = grouped[week];
-                let totalW = 0, hackneyW = 0, peabodyW = 0, otherW = 0;
+                let totalW = 0, hackneyW = 0, peabodyW = 0;
 
                 weekJobs.forEach(j => {
-                    const c = calculateNetJobCost(j).totalNet;
-                    totalW += c;
-                    if (j.isHackney) hackneyW += c;
-                    else if (j.isPeabody) peabodyW += c;
-                    else otherW += c;
+                    const cost = calculateNetJobCost(j).totalNet;
+                    totalW += cost;
+                    if (j.isPeabody) peabodyW += cost;
+                    else hackneyW += cost;
                 });
 
                 const groupDiv = document.createElement('div');
@@ -227,10 +226,9 @@
                                 <h3 class="font-bold text-lg">${formatWeekRange(week)}</h3>
                                 <span class="bg-white text-indigo-900 px-3 py-1 rounded-full font-black text-sm">TOTAL: ${formatCurrency(totalW)}</span>
                             </div>
-                            <div class="grid grid-cols-3 gap-2 text-[10px] font-bold uppercase mb-3">
+                            <div class="grid grid-cols-2 gap-2 text-[10px] font-bold uppercase mb-3">
                                 <div class="bg-blue-800 p-2 rounded">Hackney: ${formatCurrency(hackneyW)}</div>
                                 <div class="bg-red-800 p-2 rounded">Peabody: ${formatCurrency(peabodyW)}</div>
-                                <div class="bg-gray-800 p-2 rounded">Other: ${formatCurrency(otherW)}</div>
                             </div>
                             <div class="flex justify-between items-center pt-2 border-t border-indigo-500">
                                  <button onclick="toggleWeekDisplay('${week}')" class="text-xs underline">View ${weekJobs.length} Jobs</button>
