@@ -37,10 +37,10 @@
 
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import {
-            getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserLocalPersistence
+            getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import {
-            getFirestore, doc, setDoc, onSnapshot, collection, query, deleteDoc, setLogLevel
+            getFirestore, doc, setDoc, onSnapshot, collection, query, deleteDoc
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // ==========================================================
@@ -128,7 +128,7 @@
         }
 
         // ==========================================================
-        // SECTION 3: UTILITIES
+        // SECTION 3: UTILITIES & CALCULATIONS
         // ==========================================================
         function formatCurrency(value) { return '£' + (parseFloat(value) || 0).toFixed(2); }
 
@@ -181,16 +181,8 @@
             } catch (e) { return false; }
         }
 
-        window.handleRadioClick = function (event) {
-            const radio = event.target;
-            if (radio.wasCheckedBeforeClick) {
-                radio.checked = false;
-                radio.wasCheckedBeforeClick = false;
-            } else { radio.wasCheckedBeforeClick = true; }
-        };
-
         // ==========================================================
-        // SECTION 4: RENDERING (WITH FULL WEEKLY SPLIT)
+        // SECTION 4: RENDERING (WEEKLY BREAKDOWN & HEADERS)
         // ==========================================================
         window.renderJobs = function () {
             const container = document.getElementById('jobList');
@@ -210,8 +202,8 @@
 
             const sortedWeeks = Object.keys(grouped).sort((a, b) => b === 'Unscheduled' ? -1 : new Date(b) - new Date(a));
 
-            sortedWeeks.forEach(weekStartDate => {
-                const weekJobs = grouped[weekStartDate];
+            sortedWeeks.forEach(week => {
+                const weekJobs = grouped[week];
                 let totalW = 0, hackneyW = 0, peabodyW = 0, otherW = 0;
 
                 weekJobs.forEach(job => {
@@ -225,45 +217,45 @@
                 const groupDiv = document.createElement('div');
                 groupDiv.className = 'mb-6 shadow-lg rounded-xl overflow-hidden border border-gray-200';
                 groupDiv.innerHTML = `
-                    <div class="bg-indigo-700 text-white p-4">
-                        <div class="flex justify-between items-center mb-2">
-                            <h3 class="font-bold text-lg">${formatWeekRange(weekStartDate)}</h3>
-                            <span class="bg-white text-indigo-900 px-3 py-1 rounded-full font-black text-sm">TOTAL: ${formatCurrency(totalW)}</span>
+                        <div class="bg-indigo-700 text-white p-4">
+                            <div class="flex justify-between items-center mb-2">
+                                <h3 class="font-bold text-lg">${formatWeekRange(week)} (${weekJobs.length} Jobs)</h3>
+                                <span class="bg-white text-indigo-900 px-3 py-1 rounded-full font-black text-sm">TOTAL: ${formatCurrency(totalW)}</span>
+                            </div>
+                            <div class="grid grid-cols-3 gap-2 text-[10px] font-bold uppercase mb-3">
+                                <div class="bg-blue-800 p-2 rounded border border-blue-400">Hackney: ${formatCurrency(hackneyW)}</div>
+                                <div class="bg-red-800 p-2 rounded border border-red-400">Peabody: ${formatCurrency(peabodyW)}</div>
+                                <div class="bg-gray-800 p-2 rounded border border-gray-400">Other: ${formatCurrency(otherW)}</div>
+                            </div>
+                            <div class="flex justify-between items-center pt-2 border-t border-indigo-500">
+                                 <button onclick="toggleWeekDisplay('${week}')" class="text-xs underline">Show/Hide Jobs</button>
+                                 <button onclick="exportWeekData('${week}')" class="bg-green-500 px-4 py-1 rounded font-bold text-xs hover:bg-green-600">Export Week</button>
+                            </div>
                         </div>
-                        <div class="grid grid-cols-3 gap-2 text-[10px] font-bold uppercase mb-3">
-                            <div class="bg-blue-800 p-2 rounded">Hackney: ${formatCurrency(hackneyW)}</div>
-                            <div class="bg-red-800 p-2 rounded">Peabody: ${formatCurrency(peabodyW)}</div>
-                            <div class="bg-gray-800 p-2 rounded">Other: ${formatCurrency(otherW)}</div>
+                        <div id="jobs-${week}" class="p-4 bg-white space-y-4" style="${searchTerm ? '' : 'display:none'}">
+                            ${weekJobs.map(job => createJobCardHtml(job)).join('')}
                         </div>
-                        <div class="flex justify-between items-center pt-2 border-t border-indigo-500">
-                             <button onclick="toggleWeekDisplay('${weekStartDate}')" class="text-xs underline">View ${weekJobs.length} Jobs</button>
-                             <button onclick="exportWeekData('${weekStartDate}')" class="bg-green-500 px-4 py-1 rounded font-bold text-xs hover:bg-green-600">Export Week</button>
-                        </div>
-                    </div>
-                    <div id="jobs-${weekStartDate}" class="p-4 bg-white space-y-4" style="${searchTerm ? '' : 'display:none'}">
-                        ${weekJobs.map(job => createJobCardHtml(job)).join('')}
-                    </div>
-                `;
+                    `;
                 container.appendChild(groupDiv);
             });
         };
 
         function createJobCardHtml(job) {
             const costs = calculateNetJobCost(job);
-            const type = job.isHackney ? 'Hackney' : (job.isPeabody ? 'Peabody' : 'Other');
+            const typeLabel = job.isHackney ? 'Hackney' : (job.isPeabody ? 'Peabody' : 'Other');
             return `
-                <div id="job-${job.id}" class="p-4 border rounded-lg bg-gray-50">
-                    <div class="flex justify-between font-bold">
-                        <span>${job.address} <span class="text-xs text-gray-400 font-normal">(${type})</span></span>
-                        <span class="text-indigo-600">${formatCurrency(costs.totalNet)}</span>
+                    <div id="job-${job.id}" class="p-4 border rounded-lg bg-gray-50">
+                        <div class="flex justify-between font-bold">
+                            <span>${job.address} <span class="text-xs text-gray-400 font-normal">(${typeLabel})</span></span>
+                            <span class="text-indigo-600">${formatCurrency(costs.totalNet)}</span>
+                        </div>
+                        <p class="text-sm text-gray-600 mt-1">${job.description || ''}</p>
+                        <div class="mt-3 flex space-x-4 text-xs font-bold text-indigo-500">
+                            <button onclick="editJob('${job.id}')">EDIT</button>
+                            <button onclick="deleteJob('${job.id}')" class="text-red-400">DELETE</button>
+                        </div>
                     </div>
-                    <p class="text-sm text-gray-600 mt-1">${job.description || ''}</p>
-                    <div class="mt-3 flex space-x-4 text-xs font-bold text-indigo-500">
-                        <button onclick="editJob('${job.id}')">EDIT</button>
-                        <button onclick="deleteJob('${job.id}')" class="text-red-400">DELETE</button>
-                    </div>
-                </div>
-            `;
+                `;
         }
 
         window.toggleWeekDisplay = function (id) {
@@ -272,7 +264,7 @@
         };
 
         // ==========================================================
-        // SECTION 5: CRUD & EDITING (FIXED RADIO BUTTONS)
+        // SECTION 5: CRUD & EDITING (FIXED JOB TYPES)
         // ==========================================================
         window.addJob = async function (e) {
             e.preventDefault();
@@ -299,21 +291,21 @@
             const job = allJobs.find(j => j.id === id);
             const div = document.getElementById(`job-${id}`);
             div.innerHTML = `
-                <form onsubmit="saveEdit(event, '${id}')" id="editForm-${id}" class="space-y-3">
-                    <input type="text" id="editAddr-${id}" class="w-full border p-2 rounded" value="${job.address}">
-                    <div class="flex gap-2">
-                        <input type="number" step="0.01" id="editLab-${id}" class="w-1/2 border p-2 rounded" value="${job.labourPrice}">
-                        <input type="number" step="0.01" id="editMat-${id}" class="w-1/2 border p-2 rounded" value="${job.materialPrice}">
-                    </div>
-                    <div class="flex gap-4 text-sm">
-                        <label><input type="radio" name="editType-${id}" value="hackney" ${job.isHackney ? 'checked' : ''}> Hackney</label>
-                        <label><input type="radio" name="editType-${id}" value="peabody" ${job.isPeabody ? 'checked' : ''}> Peabody</label>
-                        <label><input type="radio" name="editType-${id}" value="other" ${(!job.isHackney && !job.isPeabody) ? 'checked' : ''}> Other</label>
-                    </div>
-                    <button type="submit" class="w-full bg-green-600 text-white p-2 rounded font-bold">Save Changes</button>
-                    <button type="button" onclick="renderJobs()" class="w-full text-gray-400 text-xs">Cancel</button>
-                </form>
-            `;
+                    <form onsubmit="saveEdit(event, '${id}')" id="editForm-${id}" class="space-y-3">
+                        <input type="text" id="editAddr-${id}" class="w-full border p-2 rounded" value="${job.address}">
+                        <div class="flex gap-2">
+                            <input type="number" step="0.01" id="editLab-${id}" class="w-1/2 border p-2 rounded" value="${job.labourPrice}">
+                            <input type="number" step="0.01" id="editMat-${id}" class="w-1/2 border p-2 rounded" value="${job.materialPrice}">
+                        </div>
+                        <div class="flex gap-4 text-sm font-bold text-gray-700 py-1">
+                            <label class="flex items-center"><input type="radio" name="editType-${id}" value="hackney" ${job.isHackney ? 'checked' : ''} class="mr-1"> Hackney</label>
+                            <label class="flex items-center"><input type="radio" name="editType-${id}" value="peabody" ${job.isPeabody ? 'checked' : ''} class="mr-1"> Peabody</label>
+                            <label class="flex items-center"><input type="radio" name="editType-${id}" value="other" ${(!job.isHackney && !job.isPeabody) ? 'checked' : ''} class="mr-1"> Other</label>
+                        </div>
+                        <button type="submit" class="w-full bg-green-600 text-white p-2 rounded font-bold">Save Changes</button>
+                        <button type="button" onclick="renderJobs()" class="w-full text-gray-400 text-xs">Cancel</button>
+                    </form>
+                `;
         };
 
         window.saveEdit = async function (e, id) {
@@ -330,8 +322,21 @@
         };
 
         // ==========================================================
-        // SECTION 6: EXPORT (FIXED)
+        // SECTION 6: EXPORT (WORD + EXCEL)
         // ==========================================================
+        window.generateXLSX = function (jobs, invNumber) {
+            const excelData = jobs.map(j => ({
+                Address: j.address,
+                Labour: j.labourPrice,
+                Materials: j.materialPrice,
+                Description: j.description
+            }));
+            const ws = XLSX.utils.json_to_sheet(excelData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Jobs");
+            XLSX.writeFile(wb, `${invNumber}.xlsx`);
+        };
+
         window.exportWeekData = async function (week) {
             const jobs = allJobs.filter(j => getWeekStartDate(j.dateCompleted) === week);
             const peabody = jobs.filter(j => j.isPeabody);
@@ -342,16 +347,20 @@
             if (peabody.length > 0) {
                 fbMinor++;
                 const inv = `FB_${INVOICE_MAJOR_NUMBER}.${String(fbMinor).padStart(2, '0')}`;
-                await window.generateDocxInvoice('Freshbuild', aggregateInvoiceData(peabody, inv));
+                if (await window.generateDocxInvoice('Freshbuild', aggregateInvoiceData(peabody, inv))) {
+                    window.generateXLSX(peabody, inv);
+                }
             }
             if (saltash.length > 0) {
                 saMinor++;
                 const inv = `${INVOICE_MAJOR_NUMBER}.${String(saMinor).padStart(2, '0')}`;
-                await window.generateDocxInvoice('Saltash', aggregateInvoiceData(saltash, inv));
+                if (await window.generateDocxInvoice('Saltash', aggregateInvoiceData(saltash, inv))) {
+                    window.generateXLSX(saltash, inv);
+                }
             }
 
             await saveInvoiceNumbers(INVOICE_MAJOR_NUMBER, fbMinor, saMinor);
-            alert("Export complete. Ensure 'ClientInvoiceBlank.docx' is in the same folder.");
+            alert("Export complete. Check downloads for both Word and Excel files.");
         };
 
         window.generateDocxInvoice = async function (client, data) {
@@ -364,7 +373,7 @@
                 const out = docInst.getZip().generate({ type: "blob" });
                 saveAs(out, `${data.INVOICE_NUMBER}.docx`);
                 return true;
-            } catch (e) { console.error(e); return false; }
+            } catch (e) { alert("Word Template Error: Ensure 'ClientInvoiceBlank.docx' is in the same folder."); return false; }
         };
 
         window.onload = initFirebase;
