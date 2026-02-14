@@ -324,36 +324,35 @@
         // ==========================================================
         // SECTION 6: EXPORT (WORD + EXCEL)
         // ==========================================================
-        window.generateXLSX = function (jobs, invNumber) {
-            if (jobs.length === 0) return;
+        window.generateXLSX = function (jobs, invoiceNumber) {
+            if (!jobs || jobs.length === 0) return;
 
+            // 1. Map data to your specific Excel headers
             const excelData = jobs.map(job => {
                 const costs = calculateNetJobCost(job);
-
                 return {
-                    Address: job.title,
-                    Code: "",
+                    Address: job.address || job.title,
+                    Code: "", // Empty as per your requested layout
                     Labour: costs.grossLabour,
                     Materials: costs.material,
-                    Description: job.description
+                    Description: job.description || ""
                 };
             });
 
             const headers = ["Address", "Code", "Labour", "Materials", "Description"];
 
+            // 2. Create worksheet
             const worksheet = XLSX.utils.json_to_sheet(excelData, {
                 header: headers,
                 skipHeader: false
             });
 
-            if (!worksheet['!ref']) {
-                console.warn(`Worksheet reference is missing after data mapping for ${type} jobs.`);
-                return;
-            }
+            if (!worksheet['!ref']) return;
 
             let range = XLSX.utils.decode_range(worksheet['!ref']);
             const currencyFormat = '£#,##0.00';
 
+            // Helper to set text in summary cells
             const setCellText = (ws, c, r, text) => {
                 const cellRef = XLSX.utils.encode_cell({ c: c, r: r });
                 ws[cellRef] = { v: text, t: 's' };
@@ -362,28 +361,24 @@
             let totalLabourSum = 0;
             let totalMaterialsSum = 0;
 
+            // 3. Format rows and calculate sums for the footer
             for (let R = range.s.r + 1; R <= range.e.r; ++R) {
                 const labourCellRef = XLSX.utils.encode_cell({ c: 2, r: R });
-                const labourCell = worksheet[labourCellRef];
+                const matCellRef = XLSX.utils.encode_cell({ c: 3, r: R });
 
-                if (labourCell) {
+                if (worksheet[labourCellRef]) {
                     worksheet[labourCellRef].z = currencyFormat;
-                    totalLabourSum += (parseFloat(labourCell.v) || 0);
+                    totalLabourSum += (parseFloat(worksheet[labourCellRef].v) || 0);
                 }
-
-                const materialCellRef = XLSX.utils.encode_cell({ c: 3, r: R });
-                const materialCell = worksheet[materialCellRef];
-
-                if (materialCell) {
-                    worksheet[materialCellRef].z = currencyFormat;
-                    totalMaterialsSum += (parseFloat(materialCell.v) || 0);
+                if (worksheet[matCellRef]) {
+                    worksheet[matCellRef].z = currencyFormat;
+                    totalMaterialsSum += (parseFloat(worksheet[matCellRef].v) || 0);
                 }
             }
 
-
+            // 4. Create Grand Totals Summary at the bottom
             const titleRowIndex = range.e.r + 2;
             const valueRowIndex = range.e.r + 3;
-
             const finalTotalSum = totalLabourSum + totalMaterialsSum;
 
             setCellText(worksheet, 2, titleRowIndex, 'Total Labour');
@@ -392,60 +387,33 @@
 
             setCellText(worksheet, 0, valueRowIndex, 'GRAND TOTALS');
 
-            const labourValueRef = XLSX.utils.encode_cell({ c: 2, r: valueRowIndex });
-            worksheet[labourValueRef] = { t: 'n', v: totalLabourSum, z: currencyFormat };
+            worksheet[XLSX.utils.encode_cell({ c: 2, r: valueRowIndex })] = { t: 'n', v: totalLabourSum, z: currencyFormat };
+            worksheet[XLSX.utils.encode_cell({ c: 3, r: valueRowIndex })] = { t: 'n', v: totalMaterialsSum, z: currencyFormat };
+            worksheet[XLSX.utils.encode_cell({ c: 4, r: valueRowIndex })] = { t: 'n', v: finalTotalSum, z: currencyFormat };
 
-            const materialValueRef = XLSX.utils.encode_cell({ c: 3, r: valueRowIndex });
-            worksheet[materialValueRef] = { t: 'n', v: totalMaterialsSum, z: currencyFormat };
-
-            const finalTotalValueRef = XLSX.utils.encode_cell({ c: 4, r: valueRowIndex });
-            worksheet[finalTotalValueRef] = { t: 'n', v: finalTotalSum, z: currencyFormat };
-
+            // Expand range to include summary
             range.e.r = valueRowIndex;
             worksheet['!ref'] = XLSX.utils.encode_range(range);
 
-
-            const wscols = headers.map(header => {
+            // 5. Auto-adjust Column Widths (Max 50 characters)
+            const wscols = headers.map((header, colIndex) => {
                 let maxLen = header.length;
-                const colIndex = headers.indexOf(header);
-
-                for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-                    const cellRef = XLSX.utils.encode_cell({ c: colIndex, r: R });
-                    const cell = worksheet[cellRef];
-
-                    if (cell && cell.v !== null && cell.v !== undefined) {
-                        let len = String(cell.v).length;
-
-                        if (cell.z && cell.z === currencyFormat && (header === 'Labour' || header === 'Materials' || header === 'Description')) {
-                            len = 10;
-                        } else if (cell.t === 's' && cell.v) {
-                            len = cell.v.length;
-                        } else if (cell.t === 'n' && cell.w) {
-                            len = cell.w.length;
-                        }
-
-                        if (len > maxLen) {
-                            maxLen = len;
-                        }
-                    } else if (cell && cell.t === 's' && cell.v) {
-                        if (cell.v.length > maxLen) {
-                            maxLen = cell.v.length;
-                        }
+                for (let R = range.s.r; R <= range.e.r; ++R) {
+                    const cell = worksheet[XLSX.utils.encode_cell({ c: colIndex, r: R })];
+                    if (cell && cell.v) {
+                        const len = String(cell.v).length;
+                        if (len > maxLen) maxLen = len;
                     }
                 }
-
                 return { wch: Math.min(maxLen + 2, 50) };
             });
-
             worksheet['!cols'] = wscols;
 
+            // 6. Generate File
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, `Jobs`);
-
             const safeInvoiceNumber = invoiceNumber.replace(/[^a-zA-Z0-9_]/g, '.');
-            const finalFileName = `${safeInvoiceNumber}.xlsx`;
-
-            XLSX.writeFile(workbook, finalFileName, { bookType: 'xlsx', type: 'base64' });
+            XLSX.writeFile(workbook, `${safeInvoiceNumber}.xlsx`);
         };
 
         window.exportWeekData = async function (week) {
@@ -494,7 +462,7 @@
     <div class="container mx-auto p-4 sm:p-6 lg:p-8">
         <h1 class="text-3xl font-extrabold text-indigo-700 mb-2">Job Manager & Invoice Generator</h1>
         <p id="authStatus" class="text-sm text-gray-600 mb-6">Status: Initializing...</p>
-        <p > Version 1.1 </p>
+        <p > Version 1.2 </p>
 
         <div class="bg-white p-6 rounded-xl shadow-2xl mb-8 border-t-4 border-indigo-600">
             <h2 class="text-2xl font-semibold text-gray-800 mb-4">Add New Job</h2>
