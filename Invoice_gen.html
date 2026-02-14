@@ -29,7 +29,7 @@
 
     <script type="module">
         // ===============================================
-        // SECTION 0: DOCX & UTILITY IMPORTS
+        // SECTION 0: IMPORTS
         // ===============================================
         import PizZip from "https://esm.sh/pizzip@3.1.6";
         import Docxtemplater from "https://esm.sh/docxtemplater";
@@ -79,12 +79,13 @@
         };
 
         // ==========================================================
-        // SECTION 2: FIREBASE INITIALIZATION
+        // SECTION 2: FIREBASE LOGIC
         // ==========================================================
         function getJobsCollectionRef() { return collection(db, `artifacts/${appId}/public/data/${DB_COLLECTION}`); }
         function getInvoiceConfigDocRef() { return doc(db, `artifacts/${appId}/public/data/${INVOICE_NUMBERS_DOC_PATH}`); }
 
         async function initFirebase() {
+            const status = document.getElementById('authStatus');
             try {
                 app = initializeApp(FIREBASE_CONFIG);
                 db = getFirestore(app);
@@ -95,13 +96,17 @@
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         userId = user.uid;
+                        if (status) status.textContent = "Status: Connected";
                         if (!isAuthReady) {
                             isAuthReady = true;
                             setupInvoiceNumberListener();
                         }
                     }
                 });
-            } catch (error) { console.error("Firebase Init Error:", error); }
+            } catch (error) {
+                if (status) status.textContent = "Connection Error";
+                console.error("Firebase Init Error:", error);
+            }
         }
 
         function setupInvoiceNumberListener() {
@@ -128,7 +133,7 @@
         }
 
         // ==========================================================
-        // SECTION 3: UTILITIES & CALCULATIONS
+        // SECTION 3: UTILITIES
         // ==========================================================
         function formatCurrency(value) { return '£' + (parseFloat(value) || 0).toFixed(2); }
 
@@ -182,12 +187,12 @@
         }
 
         // ==========================================================
-        // SECTION 4: RENDERING (WEEKLY BREAKDOWN & HEADERS)
+        // SECTION 4: RENDERING (WEEKLY BREAKDOWN)
         // ==========================================================
         window.renderJobs = function () {
             const container = document.getElementById('jobList');
-            container.innerHTML = '';
             const searchTerm = document.getElementById('jobSearch').value.toLowerCase().trim();
+            container.innerHTML = '';
 
             const filteredJobs = allJobs.filter(job =>
                 [job.title, job.description].join(' ').toLowerCase().includes(searchTerm)
@@ -206,12 +211,12 @@
                 const weekJobs = grouped[week];
                 let totalW = 0, hackneyW = 0, peabodyW = 0, otherW = 0;
 
-                weekJobs.forEach(job => {
-                    const cost = calculateNetJobCost(job).totalNet;
-                    totalW += cost;
-                    if (job.isHackney) hackneyW += cost;
-                    else if (job.isPeabody) peabodyW += cost;
-                    else otherW += cost;
+                weekJobs.forEach(j => {
+                    const c = calculateNetJobCost(j).totalNet;
+                    totalW += c;
+                    if (j.isHackney) hackneyW += c;
+                    else if (j.isPeabody) peabodyW += c;
+                    else otherW += c;
                 });
 
                 const groupDiv = document.createElement('div');
@@ -219,16 +224,16 @@
                 groupDiv.innerHTML = `
                         <div class="bg-indigo-700 text-white p-4">
                             <div class="flex justify-between items-center mb-2">
-                                <h3 class="font-bold text-lg">${formatWeekRange(week)} (${weekJobs.length} Jobs)</h3>
+                                <h3 class="font-bold text-lg">${formatWeekRange(week)}</h3>
                                 <span class="bg-white text-indigo-900 px-3 py-1 rounded-full font-black text-sm">TOTAL: ${formatCurrency(totalW)}</span>
                             </div>
                             <div class="grid grid-cols-3 gap-2 text-[10px] font-bold uppercase mb-3">
-                                <div class="bg-blue-800 p-2 rounded border border-blue-400">Hackney: ${formatCurrency(hackneyW)}</div>
-                                <div class="bg-red-800 p-2 rounded border border-red-400">Peabody: ${formatCurrency(peabodyW)}</div>
-                                <div class="bg-gray-800 p-2 rounded border border-gray-400">Other: ${formatCurrency(otherW)}</div>
+                                <div class="bg-blue-800 p-2 rounded">Hackney: ${formatCurrency(hackneyW)}</div>
+                                <div class="bg-red-800 p-2 rounded">Peabody: ${formatCurrency(peabodyW)}</div>
+                                <div class="bg-gray-800 p-2 rounded">Other: ${formatCurrency(otherW)}</div>
                             </div>
                             <div class="flex justify-between items-center pt-2 border-t border-indigo-500">
-                                 <button onclick="toggleWeekDisplay('${week}')" class="text-xs underline">Show/Hide Jobs</button>
+                                 <button onclick="toggleWeekDisplay('${week}')" class="text-xs underline">View ${weekJobs.length} Jobs</button>
                                  <button onclick="exportWeekData('${week}')" class="bg-green-500 px-4 py-1 rounded font-bold text-xs hover:bg-green-600">Export Week</button>
                             </div>
                         </div>
@@ -264,7 +269,7 @@
         };
 
         // ==========================================================
-        // SECTION 5: CRUD & EDITING (FIXED JOB TYPES)
+        // SECTION 5: CRUD & EDITING
         // ==========================================================
         window.addJob = async function (e) {
             e.preventDefault();
@@ -322,124 +327,68 @@
         };
 
         // ==========================================================
-        // SECTION 6: EXPORT (WORD + EXCEL)
+        // SECTION 6: EXPORT (WORD + CUSTOM EXCEL LAYOUT)
         // ==========================================================
-        window.generateXLSX = function (jobs, invoiceNumber) {
+        window.generateXLSX = function (jobs, invNumber) {
             if (!jobs || jobs.length === 0) return;
-
-            // 1. Map data to your specific Excel headers
-            const excelData = jobs.map(job => {
-                const costs = calculateNetJobCost(job);
-                return {
-                    Address: job.address || job.title,
-                    Code: "", // Empty as per your requested layout
-                    Labour: costs.grossLabour,
-                    Materials: costs.material,
-                    Description: job.description || ""
-                };
+            const excelData = jobs.map(j => {
+                const c = calculateNetJobCost(j);
+                return { Address: j.address, Code: "", Labour: c.grossLabour, Materials: c.material, Description: j.description };
             });
 
             const headers = ["Address", "Code", "Labour", "Materials", "Description"];
+            const ws = XLSX.utils.json_to_sheet(excelData, { header: headers });
+            const range = XLSX.utils.decode_range(ws['!ref']);
+            const cur = '£#,##0.00';
 
-            // 2. Create worksheet
-            const worksheet = XLSX.utils.json_to_sheet(excelData, {
-                header: headers,
-                skipHeader: false
-            });
-
-            if (!worksheet['!ref']) return;
-
-            let range = XLSX.utils.decode_range(worksheet['!ref']);
-            const currencyFormat = '£#,##0.00';
-
-            // Helper to set text in summary cells
-            const setCellText = (ws, c, r, text) => {
-                const cellRef = XLSX.utils.encode_cell({ c: c, r: r });
-                ws[cellRef] = { v: text, t: 's' };
-            };
-
-            let totalLabourSum = 0;
-            let totalMaterialsSum = 0;
-
-            // 3. Format rows and calculate sums for the footer
+            let tL = 0, tM = 0;
             for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-                const labourCellRef = XLSX.utils.encode_cell({ c: 2, r: R });
-                const matCellRef = XLSX.utils.encode_cell({ c: 3, r: R });
-
-                if (worksheet[labourCellRef]) {
-                    worksheet[labourCellRef].z = currencyFormat;
-                    totalLabourSum += (parseFloat(worksheet[labourCellRef].v) || 0);
-                }
-                if (worksheet[matCellRef]) {
-                    worksheet[matCellRef].z = currencyFormat;
-                    totalMaterialsSum += (parseFloat(worksheet[matCellRef].v) || 0);
-                }
+                const lCell = ws[XLSX.utils.encode_cell({ c: 2, r: R })];
+                const mCell = ws[XLSX.utils.encode_cell({ c: 3, r: R })];
+                if (lCell) { lCell.z = cur; tL += (parseFloat(lCell.v) || 0); }
+                if (mCell) { mCell.z = cur; tM += (parseFloat(mCell.v) || 0); }
             }
 
-            // 4. Create Grand Totals Summary at the bottom
-            const titleRowIndex = range.e.r + 2;
-            const valueRowIndex = range.e.r + 3;
-            const finalTotalSum = totalLabourSum + totalMaterialsSum;
+            const resR = range.e.r + 2;
+            const valR = range.e.r + 3;
+            ws[XLSX.utils.encode_cell({ c: 2, r: resR })] = { v: 'Total Labour', t: 's' };
+            ws[XLSX.utils.encode_cell({ c: 3, r: resR })] = { v: 'Total Materials', t: 's' };
+            ws[XLSX.utils.encode_cell({ c: 4, r: resR })] = { v: 'Final Total', t: 's' };
+            ws[XLSX.utils.encode_cell({ c: 0, r: valR })] = { v: 'GRAND TOTALS', t: 's' };
+            ws[XLSX.utils.encode_cell({ c: 2, r: valR })] = { t: 'n', v: tL, z: cur };
+            ws[XLSX.utils.encode_cell({ c: 3, r: valR })] = { t: 'n', v: tM, z: cur };
+            ws[XLSX.utils.encode_cell({ c: 4, r: valR })] = { t: 'n', v: tL + tM, z: cur };
 
-            setCellText(worksheet, 2, titleRowIndex, 'Total Labour');
-            setCellText(worksheet, 3, titleRowIndex, 'Total Materials');
-            setCellText(worksheet, 4, titleRowIndex, 'Final Total');
+            range.e.r = valR;
+            ws['!ref'] = XLSX.utils.encode_range(range);
+            ws['!cols'] = headers.map(() => ({ wch: 25 }));
 
-            setCellText(worksheet, 0, valueRowIndex, 'GRAND TOTALS');
-
-            worksheet[XLSX.utils.encode_cell({ c: 2, r: valueRowIndex })] = { t: 'n', v: totalLabourSum, z: currencyFormat };
-            worksheet[XLSX.utils.encode_cell({ c: 3, r: valueRowIndex })] = { t: 'n', v: totalMaterialsSum, z: currencyFormat };
-            worksheet[XLSX.utils.encode_cell({ c: 4, r: valueRowIndex })] = { t: 'n', v: finalTotalSum, z: currencyFormat };
-
-            // Expand range to include summary
-            range.e.r = valueRowIndex;
-            worksheet['!ref'] = XLSX.utils.encode_range(range);
-
-            // 5. Auto-adjust Column Widths (Max 50 characters)
-            const wscols = headers.map((header, colIndex) => {
-                let maxLen = header.length;
-                for (let R = range.s.r; R <= range.e.r; ++R) {
-                    const cell = worksheet[XLSX.utils.encode_cell({ c: colIndex, r: R })];
-                    if (cell && cell.v) {
-                        const len = String(cell.v).length;
-                        if (len > maxLen) maxLen = len;
-                    }
-                }
-                return { wch: Math.min(maxLen + 2, 50) };
-            });
-            worksheet['!cols'] = wscols;
-
-            // 6. Generate File
-            const workbook = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(workbook, worksheet, `Jobs`);
-            const safeInvoiceNumber = invoiceNumber.replace(/[^a-zA-Z0-9_]/g, '.');
-            XLSX.writeFile(workbook, `${safeInvoiceNumber}.xlsx`);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Jobs");
+            XLSX.writeFile(wb, `${invNumber}.xlsx`);
         };
 
         window.exportWeekData = async function (week) {
             const jobs = allJobs.filter(j => getWeekStartDate(j.dateCompleted) === week);
             const peabody = jobs.filter(j => j.isPeabody);
             const saltash = jobs.filter(j => !j.isPeabody);
-
-            let fbMinor = freshbuildLastMinor, saMinor = saltashLastMinor;
+            let fbM = freshbuildLastMinor, saM = saltashLastMinor;
 
             if (peabody.length > 0) {
-                fbMinor++;
-                const inv = `FB_${INVOICE_MAJOR_NUMBER}.${String(fbMinor).padStart(2, '0')}`;
+                fbM++;
+                const inv = `FB_${INVOICE_MAJOR_NUMBER}.${String(fbM).padStart(2, '0')}`;
                 if (await window.generateDocxInvoice('Freshbuild', aggregateInvoiceData(peabody, inv))) {
                     window.generateXLSX(peabody, inv);
                 }
             }
             if (saltash.length > 0) {
-                saMinor++;
-                const inv = `${INVOICE_MAJOR_NUMBER}.${String(saMinor).padStart(2, '0')}`;
+                saM++;
+                const inv = `${INVOICE_MAJOR_NUMBER}.${String(saM).padStart(2, '0')}`;
                 if (await window.generateDocxInvoice('Saltash', aggregateInvoiceData(saltash, inv))) {
                     window.generateXLSX(saltash, inv);
                 }
             }
-
-            await saveInvoiceNumbers(INVOICE_MAJOR_NUMBER, fbMinor, saMinor);
-            alert("Export complete. Check downloads for both Word and Excel files.");
+            await saveInvoiceNumbers(INVOICE_MAJOR_NUMBER, fbM, saM);
         };
 
         window.generateDocxInvoice = async function (client, data) {
@@ -449,10 +398,9 @@
                 const zip = new PizZip(content);
                 const docInst = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
                 docInst.render({ ...data, CLIENT_NAME_FULL: CLIENT_DATA[client.toUpperCase()].name, CLIENT_ADDRESS: CLIENT_DATA[client.toUpperCase()].address });
-                const out = docInst.getZip().generate({ type: "blob" });
-                saveAs(out, `${data.INVOICE_NUMBER}.docx`);
+                saveAs(docInst.getZip().generate({ type: "blob" }), `${data.INVOICE_NUMBER}.docx`);
                 return true;
-            } catch (e) { alert("Word Template Error: Ensure 'ClientInvoiceBlank.docx' is in the same folder."); return false; }
+            } catch (e) { alert("Template missing!"); return false; }
         };
 
         window.onload = initFirebase;
@@ -461,8 +409,8 @@
 <body class="bg-gray-100 min-h-screen">
     <div class="container mx-auto p-4 sm:p-6 lg:p-8">
         <h1 class="text-3xl font-extrabold text-indigo-700 mb-2">Job Manager & Invoice Generator</h1>
+        <p class="text-sm text-gray-600 mb-6"> Version 1.3 </p>
         <p id="authStatus" class="text-sm text-gray-600 mb-6">Status: Initializing...</p>
-        <p > Version 1.2 </p>
 
         <div class="bg-white p-6 rounded-xl shadow-2xl mb-8 border-t-4 border-indigo-600">
             <h2 class="text-2xl font-semibold text-gray-800 mb-4">Add New Job</h2>
