@@ -349,6 +349,29 @@
             }
         };
 
+        window.editJob = function (id) {
+            const job = allJobs.find(j => j.id === id); // Find the job in local memory
+            const div = document.getElementById(`job-${id}`); // Target the specific card
+
+            // Replace the card content with the edit form
+            div.innerHTML = `
+            <form onsubmit="saveEdit(event, '${id}')" id="editForm-${id}" class="space-y-3">
+                <input type="text" id="editAddr-${id}" class="w-full border p-2 rounded" value="${job.address}">
+                <div class="flex gap-2">
+                    <input type="number" step="0.01" id="editLab-${id}" class="w-1/2 border p-2 rounded" value="${job.labourPrice}">
+                    <input type="number" step="0.01" id="editMat-${id}" class="w-1/2 border p-2 rounded" value="${job.materialPrice}">
+                </div>
+                <div class="flex gap-4 text-sm font-bold text-gray-700 py-1">
+                    <label class="flex items-center"><input type="radio" name="editType-${id}" value="hackney" ${job.isHackney ? 'checked' : ''} class="mr-1"> Hackney</label>
+                    <label class="flex items-center"><input type="radio" name="editType-${id}" value="peabody" ${job.isPeabody ? 'checked' : ''} class="mr-1"> Peabody</label>
+                    <label class="flex items-center"><input type="radio" name="editType-${id}" value="other" ${(!job.isHackney && !job.isPeabody) ? 'checked' : ''} class="mr-1"> Other</label>
+                </div>
+                <button type="submit" class="w-full bg-green-600 text-white p-2 rounded font-bold">Save Changes</button>
+                <button type="button" onclick="renderJobs()" class="w-full text-gray-400 text-xs">Cancel</button>
+            </form>
+        `;
+        };
+
         window.saveEdit = async function (e, id) {
             e.preventDefault();
             const selectedType = document.querySelector(`input[name="editType-${id}"]:checked`)?.value;
