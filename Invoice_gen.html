@@ -355,52 +355,67 @@
         };
 
         window.editJob = function (id) {
-            const job = allJobs.find(j => j.id === id); // Find the job in local memory
-            const div = document.getElementById(`job-${id}`); // Target the specific card
+            const job = allJobs.find(j => j.id === id);
+            const div = document.getElementById(`job-${id}`);
 
-            // Replace the card content with the edit form
             div.innerHTML = `
             <form onsubmit="saveEdit(event, '${id}')" id="editForm-${id}" class="space-y-3">
                 <input type="text" id="editAddr-${id}" class="w-full border p-2 rounded" value="${job.address}">
+        
                 <div class="flex gap-2">
                     <input type="number" step="0.01" id="editLab-${id}" class="w-1/2 border p-2 rounded" value="${job.labourPrice}">
                     <input type="number" step="0.01" id="editMat-${id}" class="w-1/2 border p-2 rounded" value="${job.materialPrice}">
                 </div>
+
                 <div class="flex gap-2">
-                    <input step="0.01" id="editMat-${id}" class="w-2/3 border p-2 rounded" value="${job.description}">
-                    <input type="date" step="0.01" id="editMat-${id}" class="w-1/3 border p-2 rounded" value="${job.dateCompleted}">
+                    <input type="text" id="editDesc-${id}" class="w-2/3 border p-2 rounded" value="${job.description || ''}">
+                    <input type="date" id="editDate-${id}" class="w-1/3 border p-2 rounded" value="${job.dateCompleted || ''}">
                 </div>
+
                 <div class="flex gap-4 text-sm font-bold text-gray-700 py-1">
                     <label class="flex items-center"><input type="radio" name="editType-${id}" value="hackney" ${job.isHackney ? 'checked' : ''} class="mr-1"> Hackney</label>
                     <label class="flex items-center"><input type="radio" name="editType-${id}" value="peabody" ${job.isPeabody ? 'checked' : ''} class="mr-1"> Peabody</label>
                     <label class="flex items-center"><input type="radio" name="editType-${id}" value="other" ${(!job.isHackney && !job.isPeabody) ? 'checked' : ''} class="mr-1"> Other</label>
                 </div>
+
                 <button type="submit" class="w-full bg-green-600 text-white p-2 rounded font-bold">Save Changes</button>
                 <button type="button" onclick="renderJobs()" class="w-full text-gray-400 text-xs">Cancel</button>
-            </form>
-        `;
+            </form>`;
         };
 
         window.saveEdit = async function (e, id) {
             e.preventDefault();
+
             const selectedType = document.querySelector(`input[name="editType-${id}"]:checked`)?.value;
+
             const updated = {
                 address: document.getElementById(`editAddr-${id}`).value,
-                labourPrice: parseFloat(document.getElementById(`editLab-${id}`).value),
-                materialPrice: parseFloat(document.getElementById(`editMat-${id}`).value),
+                labourPrice: parseFloat(document.getElementById(`editLab-${id}`).value) || 0,
+                materialPrice: parseFloat(document.getElementById(`editMat-${id}`).value) || 0,
+                description: document.getElementById(`editDesc-${id}`).value,
+                dateCompleted: document.getElementById(`editDate-${id}`).value,
                 isHackney: selectedType === 'hackney',
                 isPeabody: selectedType === 'peabody'
             };
 
-            // 1. Write to DB
-            await setDoc(doc(getJobsCollectionRef(), id), updated, { merge: true });
+            try {
+                // Replace this URL with your actual endpoint
+                // await fetch(`/api/jobs/${id}`, { 
+                //     method: 'PUT', 
+                //     headers: { 'Content-Type': 'application/json' },
+                //     body: JSON.stringify(updated) 
+                // });
 
-            // 2. Update Local State
-            const index = allJobs.findIndex(j => j.id === id);
-            if (index !== -1) {
-                allJobs[index] = { ...allJobs[index], ...updated };
+                // Update local memory so the UI reflects changes immediately
+                const index = allJobs.findIndex(j => j.id === id);
+                if (index !== -1) allJobs[index] = { ...allJobs[index], ...updated };
+
+                alert("Job updated successfully!");
+                renderJobs(); // Refresh the list
+            } catch (err) {
+                console.error("Failed to save:", err);
+                alert("Error saving changes.");
             }
-            renderJobs();
         };
 
         // ==========================================================
