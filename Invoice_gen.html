@@ -388,33 +388,34 @@
 
             const selectedType = document.querySelector(`input[name="editType-${id}"]:checked`)?.value;
 
-            const updated = {
-                address: document.getElementById(`editAddr-${id}`).value,
+            // 1. Prepare the updated data object
+            const updatedData = {
+                address: document.getElementById(`editAddr-${id}`).value.trim(),
                 labourPrice: parseFloat(document.getElementById(`editLab-${id}`).value) || 0,
                 materialPrice: parseFloat(document.getElementById(`editMat-${id}`).value) || 0,
-                description: document.getElementById(`editDesc-${id}`).value,
+                description: document.getElementById(`editDesc-${id}`).value.trim(),
                 dateCompleted: document.getElementById(`editDate-${id}`).value,
                 isHackney: selectedType === 'hackney',
                 isPeabody: selectedType === 'peabody'
             };
 
             try {
-                // Replace this URL with your actual endpoint
-                // await fetch(`/api/jobs/${id}`, { 
-                //     method: 'PUT', 
-                //     headers: { 'Content-Type': 'application/json' },
-                //     body: JSON.stringify(updated) 
-                // });
+                // 2. Save to Firebase (The missing link)
+                // We use the helper getJobsCollectionRef() and the specific doc ID
+                const jobDocRef = doc(db, `artifacts/${appId}/public/data/${DB_COLLECTION}`, id);
+                await setDoc(jobDocRef, updatedData, { merge: true });
 
-                // Update local memory so the UI reflects changes immediately
+                // 3. Update local memory so UI stays snappy
                 const index = allJobs.findIndex(j => j.id === id);
-                if (index !== -1) allJobs[index] = { ...allJobs[index], ...updated };
+                if (index !== -1) {
+                    allJobs[index] = { ...allJobs[index], ...updatedData };
+                }
 
-                alert("Job updated successfully!");
-                renderJobs(); // Refresh the list
+                alert("Job updated in Database!");
+                renderJobs(); // Refresh the list to show the new data
             } catch (err) {
-                console.error("Failed to save:", err);
-                alert("Error saving changes.");
+                console.error("Firebase Update Error:", err);
+                alert("Failed to save to database. Check console for details.");
             }
         };
 
