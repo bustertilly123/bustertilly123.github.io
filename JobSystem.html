@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Add Job to Calendar 0.1</title>
+    <title>Add Job to Calendar</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
@@ -50,7 +50,6 @@
             margin-bottom: 20px;
             border-left: 4px solid #0284c7;
         }
-        .debug-tag { font-size: 12px; color: #888; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -69,9 +68,10 @@
     </div>
 
     <form id="job_form" onsubmit="submitJobToCalendar(event)" style="opacity: 0.3; pointer-events: none;">
+        
         <div class="form-group">
-            <label for="job_title">Job Title / Description</label>
-            <input type="text" id="job_title" placeholder="e.g., Consumer Unit Upgrade" required>
+            <label for="job_location">Site Address (Will show as Calendar Title)</label>
+            <input type="text" id="job_location" placeholder="e.g., 123 High St, Bromley" required>
         </div>
 
         <div class="form-group">
@@ -93,13 +93,8 @@
         </div>
 
         <div class="form-group">
-            <label for="job_location">Site Address</label>
-            <input type="text" id="job_location" placeholder="e.g., 123 High St, Bromley" required>
-        </div>
-
-        <div class="form-group">
             <label for="job_notes">Job Notes / Materials</label>
-            <textarea id="job_notes" rows="4" placeholder="List notes..."></textarea>
+            <textarea id="job_notes" rows="4" placeholder="List notes, cable sizes, material requirements..."></textarea>
         </div>
 
         <button type="submit" class="btn" id="submit_btn">Add Job to Calendar</button>
@@ -126,7 +121,6 @@
 
         // ─── DIAGNOSTIC LOGGING LOADERS ─────────────────────────────────────
         function gapiLoaded() {
-            document.getElementById('gapi_state').innerHTML = '⚙️ Core Script Loaded. Linking API Key...';
             gapi.load('client', () => {
                 gapi.client.init({
                     apiKey: API_KEY,
@@ -142,7 +136,6 @@
         }
 
         function gisLoaded() {
-            document.getElementById('gis_state').innerHTML = '⚙️ Identity Script Loaded. Configuring client id...';
             try {
                 tokenClient = google.accounts.oauth2.initTokenClient({
                     client_id: CLIENT_ID,
@@ -168,7 +161,7 @@
         function handleAuthClick() {
             const statusMsg = document.getElementById('status_msg');
             statusMsg.className = 'status_msg info';
-            statusMsg.innerHTML = '⚡ Triggering Login Popup Window... If nothing opens, check your address bar for a blocked popup notification!';
+            statusMsg.innerHTML = '⚡ Triggering Login Popup Window...';
             statusMsg.style.display = 'block';
 
             tokenClient.callback = async (resp) => {
@@ -183,13 +176,7 @@
                 document.getElementById('job_form').style.pointerEvents = 'auto';
             };
 
-            try {
-                // Request token directly
-                tokenClient.requestAccessToken({prompt: 'consent'});
-            } catch (e) {
-                statusMsg.className = 'status_msg error';
-                statusMsg.innerHTML = '❌ Direct crash when prompting pop-up: ' + e.message;
-            }
+            tokenClient.requestAccessToken({prompt: 'consent'});
         }
 
         // ─── SUBMIT DATA TO GOOGLE CALENDAR ─────────────────────────────────
@@ -201,16 +188,17 @@
             submitBtn.disabled = true;
             statusMsg.style.display = 'none';
 
-            const title = document.getElementById('job_title').value;
+            // Gather values from the streamlined form inputs
             const type = document.getElementById('job_type').value;
             const dateStr = document.getElementById('job_date').value;
             const price = document.getElementById('job_price').value;
             const location = document.getElementById('job_location').value;
             const notes = document.getElementById('job_notes').value;
 
+            // HERE IS THE MAGIC: We use 'location' for both properties
             const event = {
-                'summary': title,
-                'location': location,
+                'summary': location,   // Sets the address as the main title link
+                'location': location,  // Sets the address as the navigation location
                 'description': notes,
                 'start': { 'date': dateStr },
                 'end': { 'date': dateStr },
@@ -227,10 +215,10 @@
                 'resource': event
             }).then(response => {
                 statusMsg.className = 'status_msg success';
-                statusMsg.innerHTML = '<strong>Success!</strong> Job written to your calendar grid.';
+                statusMsg.innerHTML = '<strong>Success!</strong> Job written to calendar using address as title.';
                 statusMsg.style.display = 'block';
                 
-                document.getElementById('job_title').value = '';
+                // Clear inputs except date and dropdown
                 document.getElementById('job_price').value = '';
                 document.getElementById('job_location').value = '';
                 document.getElementById('job_notes').value = '';
