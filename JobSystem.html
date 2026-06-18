@@ -25,10 +25,7 @@
             border-radius: 5px;
             box-sizing: border-box;
         }
-        input:focus, select:focus, textarea:focus {
-            border-color: #0284c7;
-            outline: none;
-        }
+        input:focus, select:focus, textarea:focus { border-color: #0284c7; outline: none; }
         .btn {
             background-color: #0284c7;
             color: white;
@@ -42,14 +39,10 @@
         }
         .btn:hover { background-color: #0369a1; }
         .btn:disabled { background-color: #444; color: #888; cursor: not-allowed; }
-        #status_msg {
-            margin-top: 15px;
-            padding: 10px;
-            border-radius: 5px;
-            display: none;
-        }
+        #status_msg { margin-top: 15px; padding: 10px; border-radius: 5px; display: none; }
         .success { background-color: #065f46; color: #34d399; }
         .error { background-color: #881337; color: #fca5a5; }
+        .info { background-color: #1e3a8a; color: #93c5fd; }
         .auth-panel {
             background-color: #1e1e1e;
             padding: 15px;
@@ -57,18 +50,25 @@
             margin-bottom: 20px;
             border-left: 4px solid #0284c7;
         }
+        .debug-tag { font-size: 12px; color: #888; margin-top: 5px; }
     </style>
 </head>
 <body>
 
     <h1>Book New Job</h1>
 
-    <div class="auth-panel" id="auth_section">
-        <p style="margin-top: 0;">You need to connect to your Google Calendar before submitting jobs.</p>
+    <div class="auth-panel" id="system_status">
+        <p style="margin: 0 0 10px 0; font-weight: bold;">System Connection Status:</p>
+        <div id="gapi_state">⏳ Loading Google Core Script...</div>
+        <div id="gis_state">⏳ Loading Authentication Handler...</div>
+    </div>
+
+    <div class="auth-panel" id="auth_section" style="display: none;">
+        <p style="margin-top: 0;">Connection scripts ready. Please log into your Google Account:</p>
         <button class="btn" id="auth_btn" onclick="handleAuthClick()">Connect Google Calendar</button>
     </div>
 
-    <form id="job_form" onsubmit="submitJobToCalendar(event)" style="opacity: 0.4; pointer-events: none;">
+    <form id="job_form" onsubmit="submitJobToCalendar(event)" style="opacity: 0.3; pointer-events: none;">
         <div class="form-group">
             <label for="job_title">Job Title / Description</label>
             <input type="text" id="job_title" placeholder="e.g., Consumer Unit Upgrade" required>
@@ -99,7 +99,7 @@
 
         <div class="form-group">
             <label for="job_notes">Job Notes / Materials</label>
-            <textarea id="job_notes" rows="4" placeholder="List any notes, cable sizes, or consumer requirements..."></textarea>
+            <textarea id="job_notes" rows="4" placeholder="List notes..."></textarea>
         </div>
 
         <button type="submit" class="btn" id="submit_btn">Add Job to Calendar</button>
@@ -116,42 +116,132 @@
         const API_KEY = 'AIzaSyCIUMy-DB9QbvVc2YaVnwrzaq0e7trJGuc';
         
         const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
-        const SCOPES = 'https://www.googleapis.com/auth/calendar.events'; // Read/write permissions
+        const SCOPES = 'https://www.googleapis.com/auth/calendar.events';
 
         let gapiInited = false;
         let gisInited = false;
         let tokenClient;
 
-        // Set default date to today's date automatically
         document.getElementById('job_date').valueAsDate = new Date();
 
-        // ─── GOOGLE LIBS LOADERS ────────────────────────────────────────────
-        function gapiLoaded() { gapi.load('client', () => gapi.client.init({ apiKey: API_KEY, discoveryDocs: [DISCOVERY_DOC] }).then(() => { gapiInited = true; checkInitStatus(); })); }
-        function gisLoaded() { tokenClient = google.accounts.oauth2.initTokenClient({ client_id: CLIENT_ID, scope: SCOPES, callback: '' }); gisInited = true; checkInitStatus(); }
+        // ─── DIAGNOSTIC LOGGING LOADERS ─────────────────────────────────────
+        function gapiLoaded() {
+            document.getElementById('gapi_state').innerHTML = '⚙️ Core Script Loaded. Linking API Key...';
+            gapi.load('client', () => {
+                gapi.client.init({
+                    apiKey: API_KEY,
+                    discoveryDocs: [DISCOVERY_DOC],
+                }).then(() => {
+                    gapiInited = true;
+                    document.getElementById('gapi_state').innerHTML = '✅ Google API Linked Successfully.';
+                    checkInitStatus();
+                }).catch(err => {
+                    document.getElementById('gapi_state').innerHTML = '❌ API Init Error: ' + JSON.stringify(err);
+                });
+            });
+        }
+
+        function gisLoaded() {
+            document.getElementById('gis_state').innerHTML = '⚙️ Identity Script Loaded. Configuring client id...';
+            try {
+                tokenClient = google.accounts.oauth2.initTokenClient({
+                    client_id: CLIENT_ID,
+                    scope: SCOPES,
+                    callback: '', 
+                });
+                gisInited = true;
+                document.getElementById('gis_state').innerHTML = '✅ Authentication Client Configured.';
+                checkInitStatus();
+            } catch (err) {
+                document.getElementById('gis_state').innerHTML = '❌ Identity Init Error: ' + err.message;
+            }
+        }
         
         function checkInitStatus() {
             if (gapiInited && gisInited) {
-                document.getElementById('auth_btn').disabled = false;
+                document.getElementById('system_status').style.display = 'none';
+                document.getElementById('auth_section').style.display = 'block';
             }
         }
 
         // ─── AUTHENTICATION FLOW ────────────────────────────────────────────
         function handleAuthClick() {
+            const statusMsg = document.getElementById('status_msg');
+            statusMsg.className = 'status_msg info';
+            statusMsg.innerHTML = '⚡ Triggering Login Popup Window... If nothing opens, check your address bar for a blocked popup notification!';
+            statusMsg.style.display = 'block';
+
             tokenClient.callback = async (resp) => {
-                if (resp.error !== undefined) throw (resp);
-                // Unlock the form when successfully logged in
+                if (resp.error !== undefined) {
+                    statusMsg.className = 'status_msg error';
+                    statusMsg.innerHTML = '❌ Authentication Failed: ' + resp.error;
+                    throw (resp);
+                }
+                statusMsg.style.display = 'none';
                 document.getElementById('auth_section').style.display = 'none';
                 document.getElementById('job_form').style.opacity = '1';
                 document.getElementById('job_form').style.pointerEvents = 'auto';
             };
 
-            if (gapi.client.getToken() === null) {
+            try {
+                // Request token directly
                 tokenClient.requestAccessToken({prompt: 'consent'});
-            } else {
-                tokenClient.requestAccessToken({prompt: ''});
+            } catch (e) {
+                statusMsg.className = 'status_msg error';
+                statusMsg.innerHTML = '❌ Direct crash when prompting pop-up: ' + e.message;
             }
         }
 
         // ─── SUBMIT DATA TO GOOGLE CALENDAR ─────────────────────────────────
         function submitJobToCalendar(e) {
-            e.
+            e.preventDefault();
+            const submitBtn = document.getElementById('submit_btn');
+            const statusMsg = document.getElementById('status_msg');
+            
+            submitBtn.disabled = true;
+            statusMsg.style.display = 'none';
+
+            const title = document.getElementById('job_title').value;
+            const type = document.getElementById('job_type').value;
+            const dateStr = document.getElementById('job_date').value;
+            const price = document.getElementById('job_price').value;
+            const location = document.getElementById('job_location').value;
+            const notes = document.getElementById('job_notes').value;
+
+            const event = {
+                'summary': title,
+                'location': location,
+                'description': notes,
+                'start': { 'date': dateStr },
+                'end': { 'date': dateStr },
+                'extendedProperties': {
+                    'private': {
+                        'jobType': type,
+                        'price': price
+                    }
+                }
+            };
+
+            gapi.client.calendar.events.insert({
+                'calendarId': 'primary',
+                'resource': event
+            }).then(response => {
+                statusMsg.className = 'status_msg success';
+                statusMsg.innerHTML = '<strong>Success!</strong> Job written to your calendar grid.';
+                statusMsg.style.display = 'block';
+                
+                document.getElementById('job_title').value = '';
+                document.getElementById('job_price').value = '';
+                document.getElementById('job_location').value = '';
+                document.getElementById('job_notes').value = '';
+                submitBtn.disabled = false;
+            }).catch(err => {
+                statusMsg.className = 'status_msg error';
+                statusMsg.innerHTML = '<strong>Error saving job:</strong> ' + err.result.error.message;
+                statusMsg.style.display = 'block';
+                submitBtn.disabled = false;
+            });
+        }
+    </script>
+</body>
+</html>
