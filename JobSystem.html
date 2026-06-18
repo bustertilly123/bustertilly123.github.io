@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add Job to Calendar</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            padding: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        h1 { color: #ffffff; border-bottom: 2px solid #333; padding-bottom: 10px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #cccccc; }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            background-color: #1e1e1e;
+            border: 1px solid #444;
+            color: #ffffff;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        input:focus, select:focus, textarea:focus {
+            border-color: #0284c7;
+            outline: none;
+        }
+        .btn {
+            background-color: #0284c7;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            font-weight: bold;
+        }
+        .btn:hover { background-color: #0369a1; }
+        .btn:disabled { background-color: #444; color: #888; cursor: not-allowed; }
+        #status_msg {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        .success { background-color: #065f46; color: #34d399; }
+        .error { background-color: #881337; color: #fca5a5; }
+        .auth-panel {
+            background-color: #1e1e1e;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            border-left: 4px solid #0284c7;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Book New Job</h1>
+
+    <div class="auth-panel" id="auth_section">
+        <p style="margin-top: 0;">You need to connect to your Google Calendar before submitting jobs.</p>
+        <button class="btn" id="auth_btn" onclick="handleAuthClick()">Connect Google Calendar</button>
+    </div>
+
+    <form id="job_form" onsubmit="submitJobToCalendar(event)" style="opacity: 0.4; pointer-events: none;">
+        <div class="form-group">
+            <label for="job_title">Job Title / Description</label>
+            <input type="text" id="job_title" placeholder="e.g., Consumer Unit Upgrade" required>
+        </div>
+
+        <div class="form-group">
+            <label for="job_type">Job / Invoice Type</label>
+            <select id="job_type">
+                <option value="Domestic">Domestic Template</option>
+                <option value="Commercial">Commercial Template</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="job_date">Scheduled Date</label>
+            <input type="date" id="job_date" required>
+        </div>
+
+        <div class="form-group">
+            <label for="job_price">Quoted Price (£)</label>
+            <input type="number" id="job_price" placeholder="e.g., 450" step="0.01" required>
+        </div>
+
+        <div class="form-group">
+            <label for="job_location">Site Address</label>
+            <input type="text" id="job_location" placeholder="e.g., 123 High St, Bromley" required>
+        </div>
+
+        <div class="form-group">
+            <label for="job_notes">Job Notes / Materials</label>
+            <textarea id="job_notes" rows="4" placeholder="List any notes, cable sizes, or consumer requirements..."></textarea>
+        </div>
+
+        <button type="submit" class="btn" id="submit_btn">Add Job to Calendar</button>
+    </form>
+
+    <div id="status_msg"></div>
+
+    <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+    <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+
+    <script>
+        // ─── CONFIGURATION ──────────────────────────────────────────────────
+        const CLIENT_ID = '207281748804-ajuenjdl9s6surn2hgep5iuccccfls9d.apps.googleusercontent.com';
+        const API_KEY = 'AIzaSyCIUMy-DB9QbvVc2YaVnwrzaq0e7trJGuc';
+        
+        const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
+        const SCOPES = 'https://www.googleapis.com/auth/calendar.events'; // Read/write permissions
+
+        let gapiInited = false;
+        let gisInited = false;
+        let tokenClient;
+
+        // Set default date to today's date automatically
+        document.getElementById('job_date').valueAsDate = new Date();
+
+        // ─── GOOGLE LIBS LOADERS ────────────────────────────────────────────
+        function gapiLoaded() { gapi.load('client', () => gapi.client.init({ apiKey: API_KEY, discoveryDocs: [DISCOVERY_DOC] }).then(() => { gapiInited = true; checkInitStatus(); })); }
+        function gisLoaded() { tokenClient = google.accounts.oauth2.initTokenClient({ client_id: CLIENT_ID, scope: SCOPES, callback: '' }); gisInited = true; checkInitStatus(); }
+        
+        function checkInitStatus() {
+            if (gapiInited && gisInited) {
+                document.getElementById('auth_btn').disabled = false;
+            }
+        }
+
+        // ─── AUTHENTICATION FLOW ────────────────────────────────────────────
+        function handleAuthClick() {
+            tokenClient.callback = async (resp) => {
+                if (resp.error !== undefined) throw (resp);
+                // Unlock the form when successfully logged in
+                document.getElementById('auth_section').style.display = 'none';
+                document.getElementById('job_form').style.opacity = '1';
+                document.getElementById('job_form').style.pointerEvents = 'auto';
+            };
+
+            if (gapi.client.getToken() === null) {
+                tokenClient.requestAccessToken({prompt: 'consent'});
+            } else {
+                tokenClient.requestAccessToken({prompt: ''});
+            }
+        }
+
+        // ─── SUBMIT DATA TO GOOGLE CALENDAR ─────────────────────────────────
+        function submitJobToCalendar(e) {
+            e.
