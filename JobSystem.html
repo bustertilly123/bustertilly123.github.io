@@ -238,7 +238,7 @@
             tokenClient.requestAccessToken({prompt: 'consent'});
         }
 
-        // ─── SEARCH FUNCTIONALITY (UPDATED FOR SPLIT PRICING) ──────────────
+        // ─── SEARCH FUNCTIONALITY ──────────────────────────────────────────
         function searchCalendarJobs() {
             const query = document.getElementById('search_query').value.trim();
             const resultsContainer = document.getElementById('search_results');
@@ -274,7 +274,6 @@
                 events.forEach(event => {
                     const extended = event.extendedProperties?.private || {};
                     
-                    // Display split pricing safely if it exists, fallback to consolidated total if old job
                     let pricingDisplay = '';
                     if (extended.labourPrice || extended.materialPrice) {
                         const L = extended.labourPrice ? parseFloat(extended.labourPrice).toFixed(2) : '0.00';
@@ -312,7 +311,7 @@
             });
         }
 
-        // ─── BOOKING ENGINE (FIXED AND UPDATED) ───────────────────────────
+        // ─── BOOKING ENGINE (UPDATED: NO DURATION BLOCK & NO REMINDERS) ────
         function submitJobToCalendar(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit_btn');
@@ -327,18 +326,24 @@
             const location = document.getElementById('job_location').value;
             const notes = document.getElementById('job_notes').value;
 
-            const startDateTime = new Date();
-            const endDateTime = new Date(startDateTime.getTime() + (60 * 60 * 1000));
+            // Live timestamp capture for right now
+            const currentDateTime = new Date();
+            const isoString = currentDateTime.toISOString();
 
-            // Combined total for the legacy price tracker field just in case
             const combinedTotal = (parseFloat(labour) + parseFloat(materials)).toFixed(2);
 
             const event = {
                 'summary': location,
                 'location': location,
                 'description': notes,
-                'start': { 'dateTime': startDateTime.toISOString(), 'timeZone': 'Europe/London' },
-                'end': { 'dateTime': endDateTime.toISOString(), 'timeZone': 'Europe/London' },
+                // Start and End are identical: 0-minute duration point on timeline
+                'start': { 'dateTime': isoString, 'timeZone': 'Europe/London' },
+                'end': { 'dateTime': isoString, 'timeZone': 'Europe/London' },
+                // Hard-override block to disable push notifications entirely
+                'reminders': {
+                    'useDefault': false,
+                    'overrides': []
+                },
                 'extendedProperties': {
                     'private': { 
                         'jobType': type, 
@@ -354,10 +359,9 @@
                 'resource': event
             }).then(response => {
                 statusMsg.className = 'status_msg success';
-                statusMsg.innerHTML = '<strong>Success!</strong> Job written to calendar.';
+                statusMsg.innerHTML = '<strong>Success!</strong> Job pinned cleanly without notification tags.';
                 statusMsg.style.display = 'block';
                 
-                // Reset all entry fields safely
                 document.getElementById('job_price_labour').value = '';
                 document.getElementById('job_price_materials').value = '';
                 document.getElementById('job_location').value = '';
