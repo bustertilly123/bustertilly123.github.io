@@ -513,6 +513,7 @@
             statusMsg.style.display = 'none';
 
             const editId = document.getElementById('edit_event_id').value;
+            // FIXED: Consistently read the time value using the matching element ID
             const originalTime = document.getElementById('edit_event_time').value;
 
             const type = document.getElementById('job_type').value;
@@ -521,10 +522,10 @@
             const location = document.getElementById('job_location').value;
             const notes = document.getElementById('job_notes').value;
 
-            // FIX: Revert back to the exact time added or modified
+            // Determine correct start time anchor
             let startTime = editId ? originalTime : new Date().toISOString();
             
-            // Generate end time exactly 1 hour after start so it forms a clean block on the grid
+            // Generate a clean 1-hour block window on the calendar grid
             let endTime = new Date(new Date(startTime).getTime() + (60 * 60 * 1000)).toISOString();
 
             const combinedTotal = (parseFloat(labour) + parseFloat(materials)).toFixed(2);
@@ -545,6 +546,49 @@
                     }
                 }
             };
+
+            let apiCall;
+            if (editId) {
+                apiCall = gapi.client.calendar.events.update({
+                    'calendarId': TARGET_JOBS_CAL_ID,
+                    'eventId': editId,
+                    'resource': eventPayload
+                });
+            } else {
+                apiCall = gapi.client.calendar.events.insert({
+                    'calendarId': TARGET_JOBS_CAL_ID,
+                    'resource': eventPayload
+                });
+            }
+
+            apiCall.then(response => {
+                statusMsg.className = 'status_msg success';
+                statusMsg.innerHTML = editId ? '<strong>Success!</strong> Job entries updated.' : '<strong>Success!</strong> Job written to calendar.';
+                statusMsg.style.display = 'block';
+                
+                exitEditMode();
+                loadRecentJobs();
+                
+                if (document.getElementById('search_query').value.trim()) {
+                    searchCalendarJobs();
+                }
+
+                updateCalendarView(); 
+            }).catch(err => {
+                statusMsg.className = 'status_msg error';
+                statusMsg.innerHTML = '<strong>Error saving job:</strong> ' + (err.result?.error?.message || 'Check network connection');
+                statusMsg.style.display = 'block';
+                submitBtn.disabled = false;
+                
+                if (err.status === 401) {
+                    localStorage.removeItem('google_cal_token');
+                    document.getElementById('auth_section').style.display = 'block';
+                    document.getElementById('job_form').style.opacity = '0.3';
+                    document.getElementById('search_panel').style.opacity = '0.3';
+                    document.getElementById('recent_panel').style.opacity = '0.3';
+                }
+            });
+        }
 
             let apiCall;
             if (editId) {
