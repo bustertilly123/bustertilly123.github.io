@@ -225,10 +225,7 @@
         const CLIENT_ID = '207281748804-ajuenjdl9s6surn2hgep5iuccccfls9d.apps.googleusercontent.com';
         const API_KEY = 'AIzaSyCIUMy-DB9QbvVc2YaVnwrzaq0e7trJGuc';
         
-        // ─── TARGET YOUR CUSTOM JOBS CALENDAR ID HERE ────────────────────
-        // Replace this string with the ID found in your "Jobs" calendar settings
         const TARGET_JOBS_CAL_ID = '76caa9cf674dba36a49ba37ba1e578bc28d5465d1f56ab05ab8bb536f34f9adb@group.calendar.google.com'; 
-        
         const SECONDARY_CAL_ID = '76caa9cf674dba36a49ba37ba1e578bc28d5465d1f56ab05ab8bb536f34f9adb@group.calendar.google.com'; 
 
         const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
@@ -323,7 +320,7 @@
                 localStorage.setItem('google_cal_token', JSON.stringify(tokenSession));
                 unlockForm();
             };
-            tokenClient.requestAccessToken({prompt: ''}); // Left blank to prevent strict authorization errors
+            tokenClient.requestAccessToken({prompt: ''});
         }
 
         function loadRecentJobs() {
@@ -338,7 +335,6 @@
             }).then(response => {
                 let rawItems = response.result.items || [];
                 
-                // Client-side filtering bypasses the 403 Google Developer account policy block entirely
                 let filteredJobs = rawItems.filter(event => {
                     const ext = event.extendedProperties?.private || {};
                     return ext.jobType === 'Freshbuild' || ext.jobType === 'Saltash';
@@ -513,7 +509,6 @@
             statusMsg.style.display = 'none';
 
             const editId = document.getElementById('edit_event_id').value;
-            // FIXED: Consistently read the time value using the matching element ID
             const originalTime = document.getElementById('edit_event_time').value;
 
             const type = document.getElementById('job_type').value;
@@ -522,10 +517,7 @@
             const location = document.getElementById('job_location').value;
             const notes = document.getElementById('job_notes').value;
 
-            // Determine correct start time anchor
             let startTime = editId ? originalTime : new Date().toISOString();
-            
-            // Generate a clean 1-hour block window on the calendar grid
             let endTime = new Date(new Date(startTime).getTime() + (60 * 60 * 1000)).toISOString();
 
             const combinedTotal = (parseFloat(labour) + parseFloat(materials)).toFixed(2);
@@ -546,49 +538,6 @@
                     }
                 }
             };
-
-            let apiCall;
-            if (editId) {
-                apiCall = gapi.client.calendar.events.update({
-                    'calendarId': TARGET_JOBS_CAL_ID,
-                    'eventId': editId,
-                    'resource': eventPayload
-                });
-            } else {
-                apiCall = gapi.client.calendar.events.insert({
-                    'calendarId': TARGET_JOBS_CAL_ID,
-                    'resource': eventPayload
-                });
-            }
-
-            apiCall.then(response => {
-                statusMsg.className = 'status_msg success';
-                statusMsg.innerHTML = editId ? '<strong>Success!</strong> Job entries updated.' : '<strong>Success!</strong> Job written to calendar.';
-                statusMsg.style.display = 'block';
-                
-                exitEditMode();
-                loadRecentJobs();
-                
-                if (document.getElementById('search_query').value.trim()) {
-                    searchCalendarJobs();
-                }
-
-                updateCalendarView(); 
-            }).catch(err => {
-                statusMsg.className = 'status_msg error';
-                statusMsg.innerHTML = '<strong>Error saving job:</strong> ' + (err.result?.error?.message || 'Check network connection');
-                statusMsg.style.display = 'block';
-                submitBtn.disabled = false;
-                
-                if (err.status === 401) {
-                    localStorage.removeItem('google_cal_token');
-                    document.getElementById('auth_section').style.display = 'block';
-                    document.getElementById('job_form').style.opacity = '0.3';
-                    document.getElementById('search_panel').style.opacity = '0.3';
-                    document.getElementById('recent_panel').style.opacity = '0.3';
-                }
-            });
-        
 
             let apiCall;
             if (editId) {
