@@ -3,17 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Add Job to Calendar</title>
+    <title>Job Booker & Schedule View</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
             background-color: #121212;
             color: #e0e0e0;
             padding: 20px;
-            max-width: 600px;
+            margin: 0;
+        }
+        h1 { color: #ffffff; border-bottom: 2px solid #333; padding-bottom: 10px; margin-top: 0; }
+        
+        /* Two-column dashboard layout */
+        .dashboard {
+            display: flex;
+            gap: 20px;
+            max-width: 1400px;
             margin: 0 auto;
         }
-        h1 { color: #ffffff; border-bottom: 2px solid #333; padding-bottom: 10px; }
+        .left-panel { flex: 1; max-width: 500px; }
+        .right-panel { flex: 1.5; min-height: 680px; display: flex; flex-direction: column; }
+
         .form-group { margin-bottom: 15px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; color: #cccccc; }
         input, select, textarea {
@@ -26,6 +36,7 @@
             box-sizing: border-box;
         }
         input:focus, select:focus, textarea:focus { border-color: #0284c7; outline: none; }
+        
         .btn {
             background-color: #0284c7;
             color: white;
@@ -39,10 +50,12 @@
         }
         .btn:hover { background-color: #0369a1; }
         .btn:disabled { background-color: #444; color: #888; cursor: not-allowed; }
+        
         #status_msg { margin-top: 15px; padding: 10px; border-radius: 5px; display: none; }
         .success { background-color: #065f46; color: #34d399; }
         .error { background-color: #881337; color: #fca5a5; }
         .info { background-color: #1e3a8a; color: #93c5fd; }
+        
         .auth-panel {
             background-color: #1e1e1e;
             padding: 15px;
@@ -50,63 +63,85 @@
             margin-bottom: 20px;
             border-left: 4px solid #0284c7;
         }
+        
+        iframe {
+            width: 100%;
+            height: 100%;
+            flex-grow: 1;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background-color: #1e1e1e;
+        }
+
+        @media (max-width: 900px) {
+            .dashboard { flex-direction: column; }
+            .right-panel { height: 500px; }
+        }
     </style>
 </head>
 <body>
 
-    <h1>Book New Job</h1>
-
-    <div class="auth-panel" id="system_status">
-        <p style="margin: 0 0 10px 0; font-weight: bold;">System Connection Status:</p>
-        <div id="gapi_state">⏳ Loading Google Core Script...</div>
-        <div id="gis_state">⏳ Loading Authentication Handler...</div>
-    </div>
-
-    <div class="auth-panel" id="auth_section" style="display: none;">
-        <p style="margin-top: 0;">Connection scripts ready. Please log into your Google Account:</p>
-        <button class="btn" id="auth_btn" onclick="handleAuthClick()">Connect Google Calendar</button>
-    </div>
-
-    <form id="job_form" onsubmit="submitJobToCalendar(event)" style="opacity: 0.3; pointer-events: none;">
+    <div class="dashboard">
         
-        <div class="form-group">
-            <label for="job_location">Site Address (Will show as Calendar Title)</label>
-            <input type="text" id="job_location" placeholder="e.g., 123 High St, Bromley" required>
+        <div class="left-panel">
+            <h1>Book New Job</h1>
+
+            <div class="auth-panel" id="system_status">
+                <p style="margin: 0 0 5px 0; font-weight: bold;">Connection Status:</p>
+                <div id="gapi_state">⏳ Loading Google Core Scripts...</div>
+            </div>
+
+            <div class="auth-panel" id="auth_section" style="display: none;">
+                <p style="margin-top: 0;">Session expired or disconnected. Please sign in:</p>
+                <button class="btn" id="auth_btn" onclick="handleAuthClick()">Connect Google Calendar</button>
+            </div>
+
+            <form id="job_form" onsubmit="submitJobToCalendar(event)" style="opacity: 0.3; pointer-events: none;">
+                <div class="form-group">
+                    <label for="job_location">Site Address (Calendar Title)</label>
+                    <input type="text" id="job_location" placeholder="e.g., 123 High St, Bromley" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="job_type">Job / Invoice Type</label>
+                    <select id="job_type">
+                        <option value="Domestic">Domestic Template</option>
+                        <option value="Commercial">Commercial Template</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="job_date">Scheduled Date</label>
+                    <input type="date" id="job_date" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="job_price">Quoted Price (£)</label>
+                    <input type="number" id="job_price" placeholder="e.g., 450" step="0.01" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="job_notes">Job Notes / Materials</label>
+                    <textarea id="job_notes" rows="4" placeholder="List notes, cable configurations, structural layouts..."></textarea>
+                </div>
+
+                <button type="submit" class="btn" id="submit_btn">Add Job to Calendar</button>
+            </form>
+
+            <div id="status_msg"></div>
         </div>
 
-        <div class="form-group">
-            <label for="job_type">Job / Invoice Type</label>
-            <select id="job_type">
-                <option value="Domestic">Domestic Template</option>
-                <option value="Commercial">Commercial Template</option>
-            </select>
+        <div class="right-panel">
+            <iframe id="calendar_frame" src="https://calendar.google.com/calendar/embed?src=bustertilly123%40gmail.com&ctz=Europe%2FLondon&wkst=2&mode=WEEK&showPrint=0&showTabs=0&showCalendars=0&showTz=0&bgcolor=%231e1e1e"></iframe>
         </div>
 
-        <div class="form-group">
-            <label for="job_date">Scheduled Date</label>
-            <input type="date" id="job_date" required>
-        </div>
-
-        <div class="form-group">
-            <label for="job_price">Quoted Price (£)</label>
-            <input type="number" id="job_price" placeholder="e.g., 450" step="0.01" required>
-        </div>
-
-        <div class="form-group">
-            <label for="job_notes">Job Notes / Materials</label>
-            <textarea id="job_notes" rows="4" placeholder="List notes, cable sizes, material requirements..."></textarea>
-        </div>
-
-        <button type="submit" class="btn" id="submit_btn">Add Job to Calendar</button>
-    </form>
-
-    <div id="status_msg"></div>
+    </div>
 
     <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
     <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
 
     <script>
-        // ─── CONFIGURATION ──────────────────────────────────────────────────
+        // ─── CONFIGURATION ENDPOINTS ────────────────────────────────────────
         const CLIENT_ID = '207281748804-ajuenjdl9s6surn2hgep5iuccccfls9d.apps.googleusercontent.com';
         const API_KEY = 'AIzaSyCIUMy-DB9QbvVc2YaVnwrzaq0e7trJGuc';
         
@@ -117,69 +152,84 @@
         let gisInited = false;
         let tokenClient;
 
+        // Automatically snap the date field to today's date on load
         document.getElementById('job_date').valueAsDate = new Date();
 
-        // ─── DIAGNOSTIC LOGGING LOADERS ─────────────────────────────────────
+        // ─── BROWSER VAULT HANDLER (AUTO LOGIN) ──────────────────────────────
+        function checkExistingToken() {
+            const savedTokenString = localStorage.getItem('google_cal_token');
+            if (savedTokenString) {
+                const tokenData = JSON.parse(savedTokenString);
+                
+                // Ensure token lifespan has not exceeded Google's 1-hour cap
+                if (Date.now() < tokenData.expiry) {
+                    gapi.client.setToken({ access_token: tokenData.access_token });
+                    unlockForm();
+                    return true;
+                } else {
+                    localStorage.removeItem('google_cal_token'); 
+                }
+            }
+            return false;
+        }
+
+        function unlockForm() {
+            document.getElementById('system_status').style.display = 'none';
+            document.getElementById('auth_section').style.display = 'none';
+            document.getElementById('job_form').style.opacity = '1';
+            document.getElementById('job_form').style.pointerEvents = 'auto';
+        }
+
+        // ─── GOOGLE LIBRARY LOADERS ─────────────────────────────────────────
         function gapiLoaded() {
             gapi.load('client', () => {
-                gapi.client.init({
-                    apiKey: API_KEY,
-                    discoveryDocs: [DISCOVERY_DOC],
-                }).then(() => {
+                gapi.client.init({ apiKey: API_KEY, discoveryDocs: [DISCOVERY_DOC] }).then(() => {
                     gapiInited = true;
-                    document.getElementById('gapi_state').innerHTML = '✅ Google API Linked Successfully.';
                     checkInitStatus();
-                }).catch(err => {
-                    document.getElementById('gapi_state').innerHTML = '❌ API Init Error: ' + JSON.stringify(err);
                 });
             });
         }
 
         function gisLoaded() {
-            try {
-                tokenClient = google.accounts.oauth2.initTokenClient({
-                    client_id: CLIENT_ID,
-                    scope: SCOPES,
-                    callback: '', 
-                });
-                gisInited = true;
-                document.getElementById('gis_state').innerHTML = '✅ Authentication Client Configured.';
-                checkInitStatus();
-            } catch (err) {
-                document.getElementById('gis_state').innerHTML = '❌ Identity Init Error: ' + err.message;
-            }
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES,
+                callback: '', 
+            });
+            gisInited = true;
+            checkInitStatus();
         }
         
         function checkInitStatus() {
             if (gapiInited && gisInited) {
+                // Intercept layout if cache hit is successful
+                if (checkExistingToken()) {
+                    return; 
+                }
+                // Fallback to manual login interface if cache is empty/expired
                 document.getElementById('system_status').style.display = 'none';
                 document.getElementById('auth_section').style.display = 'block';
             }
         }
 
-        // ─── AUTHENTICATION FLOW ────────────────────────────────────────────
+        // ─── OAUTH SECURE HANDSHAKE ─────────────────────────────────────────
         function handleAuthClick() {
-            const statusMsg = document.getElementById('status_msg');
-            statusMsg.className = 'status_msg info';
-            statusMsg.innerHTML = '⚡ Triggering Login Popup Window...';
-            statusMsg.style.display = 'block';
-
             tokenClient.callback = async (resp) => {
-                if (resp.error !== undefined) {
-                    statusMsg.className = 'status_msg error';
-                    statusMsg.innerHTML = '❌ Authentication Failed: ' + resp.error;
-                    throw (resp);
-                }
-                statusMsg.style.display = 'none';
-                document.getElementById('auth_section').style.display = 'none';
-                document.getElementById('job_form').style.opacity = '1';
-                document.getElementById('job_form').style.pointerEvents = 'auto';
+                if (resp.error !== undefined) throw (resp);
+                
+                // Store authentication pass for 55 minutes to bypass page reloads
+                const tokenSession = {
+                    access_token: resp.access_token,
+                    expiry: Date.now() + (55 * 60 * 1000) 
+                };
+                localStorage.setItem('google_cal_token', JSON.stringify(tokenSession));
+                
+                unlockForm();
             };
-
             tokenClient.requestAccessToken({prompt: 'consent'});
         }
 
-        // ─── SUBMIT DATA TO GOOGLE CALENDAR ─────────────────────────────────
+        // ─── WRITE RESOURCE TO ENDPOINT DATASTREAM ─────────────────────────
         function submitJobToCalendar(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit_btn');
@@ -188,17 +238,16 @@
             submitBtn.disabled = true;
             statusMsg.style.display = 'none';
 
-            // Gather values from the streamlined form inputs
             const type = document.getElementById('job_type').value;
             const dateStr = document.getElementById('job_date').value;
             const price = document.getElementById('job_price').value;
             const location = document.getElementById('job_location').value;
             const notes = document.getElementById('job_notes').value;
 
-            // HERE IS THE MAGIC: We use 'location' for both properties
+            // Map address location to title summary resource directly
             const event = {
-                'summary': location,   // Sets the address as the main title link
-                'location': location,  // Sets the address as the navigation location
+                'summary': location,
+                'location': location,
                 'description': notes,
                 'start': { 'date': dateStr },
                 'end': { 'date': dateStr },
@@ -215,19 +264,30 @@
                 'resource': event
             }).then(response => {
                 statusMsg.className = 'status_msg success';
-                statusMsg.innerHTML = '<strong>Success!</strong> Job written to calendar using address as title.';
+                statusMsg.innerHTML = '<strong>Success!</strong> Job written to your calendar grid.';
                 statusMsg.style.display = 'block';
                 
-                // Clear inputs except date and dropdown
+                // Streamline layout values back to default empty fields
                 document.getElementById('job_price').value = '';
                 document.getElementById('job_location').value = '';
                 document.getElementById('job_notes').value = '';
                 submitBtn.disabled = false;
+
+                // Ping iframe resource location to dynamically refresh grid
+                document.getElementById('calendar_frame').src = document.getElementById('calendar_frame').src;
+
             }).catch(err => {
                 statusMsg.className = 'status_msg error';
                 statusMsg.innerHTML = '<strong>Error saving job:</strong> ' + err.result.error.message;
                 statusMsg.style.display = 'block';
                 submitBtn.disabled = false;
+                
+                // Handle sudden expiration disconnect errors gracefully
+                if (err.status === 401) {
+                    localStorage.removeItem('google_cal_token');
+                    document.getElementById('auth_section').style.display = 'block';
+                    document.getElementById('job_form').style.opacity = '0.3';
+                }
             });
         }
     </script>
