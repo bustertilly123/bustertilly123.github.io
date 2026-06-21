@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Booker</title>
+    <title>Job Booker & Search Dashboard</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
@@ -148,7 +148,7 @@
 
                 <form id="job_form" onsubmit="submitJobToCalendar(event)" style="opacity: 0.3; pointer-events: none;">
                     <input type="hidden" id="edit_event_id" value="">
-                    <input type="hidden" id="edit_event_time" value="">
+                    <input type="hidden" id="edit_event_date" value="">
 
                     <div class="form-group">
                         <label for="job_location">Address</label>
@@ -194,7 +194,6 @@
 
         <div class="right-panel">
             
-            <!-- CALENDAR TOGGLE CONTROL BAR -->
             <div class="toggle-box">
                 <label class="toggle-label">
                     <input type="checkbox" id="toggle_secondary_cal" onchange="updateCalendarView()">
@@ -228,7 +227,6 @@
         const CLIENT_ID = '207281748804-ajuenjdl9s6surn2hgep5iuccccfls9d.apps.googleusercontent.com';
         const API_KEY = 'AIzaSyCIUMy-DB9QbvVc2YaVnwrzaq0e7trJGuc';
         
-        // ─── CONFIGURATION ────────────────────────────────────────────────
         const PRIMARY_CAL_ID = 'bustertilly123@gmail.com';
         const SECONDARY_CAL_ID = '76caa9cf674dba36a49ba37ba1e578bc28d5465d1f56ab05ab8bb536f34f9adb@group.calendar.google.com'; 
 
@@ -242,17 +240,13 @@
         let searchCache = []; 
         let recentCache = []; 
 
-        // ─── DYNAMIC CALENDAR ROUTER ──────────────────────────────────────
         function updateCalendarView() {
             const iframe = document.getElementById('calendar_frame');
             const showSecondary = document.getElementById('toggle_secondary_cal').checked;
             
             let baseUrl = `https://calendar.google.com/calendar/embed?ctz=Europe%2FLondon&wkst=2&mode=WEEK&showPrint=0&showTabs=0&showCalendars=0&showTz=0&bgcolor=%231e1e1e`;
-            
-            // Primary layout configuration (Blue)
             baseUrl += `&src=${encodeURIComponent(PRIMARY_CAL_ID)}&color=%23039BE5`;
             
-            // Secondary layout configuration (Gold/Yellow)
             if (showSecondary && SECONDARY_CAL_ID) {
                 baseUrl += `&src=${encodeURIComponent(SECONDARY_CAL_ID)}&color=%23F4B400`;
             }
@@ -260,7 +254,6 @@
             iframe.src = baseUrl;
         }
 
-        // Initialize frame view on load
         window.addEventListener('DOMContentLoaded', updateCalendarView);
 
         function checkExistingToken() {
@@ -338,15 +331,22 @@
 
             gapi.client.calendar.events.list({
                 'calendarId': 'primary',
-                'maxResults': 8,
+                'maxResults': 30, 
                 'orderBy': 'updated',
                 'singleEvents': true
             }).then(response => {
-                recentCache = response.result.items ? response.result.items.reverse() : [];
+                let rawItems = response.result.items || [];
+                
+                let filteredJobs = rawItems.filter(event => {
+                    const ext = event.extendedProperties?.private || {};
+                    return ext.jobType === 'Freshbuild' || ext.jobType === 'Saltash';
+                });
+
+                recentCache = filteredJobs.reverse().slice(0, 8); 
                 container.innerHTML = '';
 
                 if (recentCache.length === 0) {
-                    container.innerHTML = '<div style="color: #aaa; padding: 10px;">No recent jobs tracked.</div>';
+                    container.innerHTML = '<div style="color: #aaa; padding: 10px;">No custom jobs tracked.</div>';
                     return;
                 }
 
@@ -405,11 +405,17 @@
             gapi.client.calendar.events.list({
                 'calendarId': 'primary',
                 'q': query,
-                'maxResults': 25,
+                'maxResults': 50,
                 'orderBy': 'startTime',
                 'singleEvents': true
             }).then(response => {
-                searchCache = response.result.items || [];
+                const rawSearch = response.result.items || [];
+                
+                searchCache = rawSearch.filter(event => {
+                    const ext = event.extendedProperties?.private || {};
+                    return ext.jobType === 'Freshbuild' || ext.jobType === 'Saltash';
+                });
+
                 searchStatus.style.display = 'none';
 
                 if (searchCache.length === 0) {
@@ -432,8 +438,9 @@
                     }
 
                     const type = extended.jobType ? `${extended.jobType}` : 'Standard Job';
-                    const dateObj = new Date(event.start.dateTime || event.start.date);
-                    const formattedDate = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    const dateVal = event.start.date || event.start.dateTime;
+                    const dateObj = new Date(dateVal);
+                    const formattedDate = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
                     const card = document.createElement('div');
                     card.className = 'job-card';
@@ -465,7 +472,8 @@
             const extended = event.extendedProperties?.private || {};
 
             document.getElementById('edit_event_id').value = event.id;
-            document.getElementById('edit_event_time').value = event.start.dateTime || event.start.date;
+            // Capture date string format (YYYY-MM-DD) natively
+            document.getElementById('edit_event_date').value = event.start.date || event.start.dateTime.split('T')[0];
 
             document.getElementById('job_location').value = event.summary || '';
             document.getElementById('job_type').value = extended.jobType === 'Saltash' ? 'Commercial' : 'Domestic';
@@ -483,7 +491,7 @@
 
         function exitEditMode() {
             document.getElementById('edit_event_id').value = '';
-            document.getElementById('edit_event_time').value = '';
+            document.getElementById('edit_event_date').value = '';
             
             document.getElementById('job_location').value = '';
             document.getElementById('job_price_labour').value = '';
@@ -505,7 +513,7 @@
             statusMsg.style.display = 'none';
 
             const editId = document.getElementById('edit_event_id').value;
-            const originalTime = document.getElementById('edit_event_time').value;
+            const originalDate = document.getElementById('edit_event_date').value;
 
             const type = document.getElementById('job_type').value;
             const labour = document.getElementById('job_price_labour').value;
@@ -513,15 +521,17 @@
             const location = document.getElementById('job_location').value;
             const notes = document.getElementById('job_notes').value;
 
-            const eventTimeStr = editId ? originalTime : new Date().toISOString();
+            // Generate strict YYYY-MM-DD format for All-Day execution
+            let targetDateStr = editId ? originalDate : new Date().toISOString().split('T')[0];
             const combinedTotal = (parseFloat(labour) + parseFloat(materials)).toFixed(2);
 
             const eventPayload = {
                 'summary': location,
                 'location': location,
                 'description': notes,
-                'start': { 'dateTime': eventTimeStr, 'timeZone': 'Europe/London' },
-                'end': { 'dateTime': eventTimeStr, 'timeZone': 'Europe/London' },
+                // CRITICAL FIX: Switch fields to all-day properties 'date' instead of time strings
+                'start': { 'date': targetDateStr },
+                'end': { 'date': targetDateStr },
                 'reminders': { 'useDefault': false, 'overrides': [] },
                 'extendedProperties': {
                     'private': { 
