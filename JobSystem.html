@@ -14,7 +14,6 @@
         }
         h1 { color: #ffffff; border-bottom: 2px solid #333; padding-bottom: 10px; margin-top: 0; }
         
-        /* Two-column dashboard layout */
         .dashboard {
             display: flex;
             gap: 20px;
@@ -54,7 +53,6 @@
         #status_msg { margin-top: 15px; padding: 10px; border-radius: 5px; display: none; }
         .success { background-color: #065f46; color: #34d399; }
         .error { background-color: #881337; color: #fca5a5; }
-        .info { background-color: #1e3a8a; color: #93c5fd; }
         
         .auth-panel {
             background-color: #1e1e1e;
@@ -111,18 +109,13 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="job_date">Scheduled Date</label>
-                    <input type="date" id="job_date" required>
-                </div>
-
-                <div class="form-group">
                     <label for="job_price">Quoted Price (£)</label>
                     <input type="number" id="job_price" placeholder="e.g., 450" step="0.01" required>
                 </div>
 
                 <div class="form-group">
                     <label for="job_notes">Job Notes / Materials</label>
-                    <textarea id="job_notes" rows="4" placeholder="List notes, cable configurations, structural layouts..."></textarea>
+                    <textarea id="job_notes" rows="4" placeholder="List notes here..."></textarea>
                 </div>
 
                 <button type="submit" class="btn" id="submit_btn">Add Job to Calendar</button>
@@ -141,7 +134,6 @@
     <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
 
     <script>
-        // ─── CONFIGURATION ENDPOINTS ────────────────────────────────────────
         const CLIENT_ID = '207281748804-ajuenjdl9s6surn2hgep5iuccccfls9d.apps.googleusercontent.com';
         const API_KEY = 'AIzaSyCIUMy-DB9QbvVc2YaVnwrzaq0e7trJGuc';
         
@@ -152,16 +144,10 @@
         let gisInited = false;
         let tokenClient;
 
-        // Automatically snap the date field to today's date on load
-        document.getElementById('job_date').valueAsDate = new Date();
-
-        // ─── BROWSER VAULT HANDLER (AUTO LOGIN) ──────────────────────────────
         function checkExistingToken() {
             const savedTokenString = localStorage.getItem('google_cal_token');
             if (savedTokenString) {
                 const tokenData = JSON.parse(savedTokenString);
-                
-                // Ensure token lifespan has not exceeded Google's 1-hour cap
                 if (Date.now() < tokenData.expiry) {
                     gapi.client.setToken({ access_token: tokenData.access_token });
                     unlockForm();
@@ -180,7 +166,6 @@
             document.getElementById('job_form').style.pointerEvents = 'auto';
         }
 
-        // ─── GOOGLE LIBRARY LOADERS ─────────────────────────────────────────
         function gapiLoaded() {
             gapi.load('client', () => {
                 gapi.client.init({ apiKey: API_KEY, discoveryDocs: [DISCOVERY_DOC] }).then(() => {
@@ -202,34 +187,25 @@
         
         function checkInitStatus() {
             if (gapiInited && gisInited) {
-                // Intercept layout if cache hit is successful
-                if (checkExistingToken()) {
-                    return; 
-                }
-                // Fallback to manual login interface if cache is empty/expired
+                if (checkExistingToken()) return; 
                 document.getElementById('system_status').style.display = 'none';
                 document.getElementById('auth_section').style.display = 'block';
             }
         }
 
-        // ─── OAUTH SECURE HANDSHAKE ─────────────────────────────────────────
         function handleAuthClick() {
             tokenClient.callback = async (resp) => {
                 if (resp.error !== undefined) throw (resp);
-                
-                // Store authentication pass for 55 minutes to bypass page reloads
                 const tokenSession = {
                     access_token: resp.access_token,
                     expiry: Date.now() + (55 * 60 * 1000) 
                 };
                 localStorage.setItem('google_cal_token', JSON.stringify(tokenSession));
-                
                 unlockForm();
             };
             tokenClient.requestAccessToken({prompt: 'consent'});
         }
 
-        // ─── WRITE RESOURCE TO ENDPOINT DATASTREAM ─────────────────────────
         function submitJobToCalendar(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit_btn');
@@ -239,18 +215,29 @@
             statusMsg.style.display = 'none';
 
             const type = document.getElementById('job_type').value;
-            const dateStr = document.getElementById('job_date').value;
             const price = document.getElementById('job_price').value;
             const location = document.getElementById('job_location').value;
             const notes = document.getElementById('job_notes').value;
 
-            // Map address location to title summary resource directly
+            // ─── LIVE TIMESTAMP CAPTURE ─────────────────────────────────────
+            // Grabs the exact millisecond you press the button
+            const startDateTime = new Date();
+            
+            // Sets the duration block to exactly 1 hour out from right now
+            const endDateTime = new Date(startDateTime.getTime() + (60 * 60 * 1000));
+
             const event = {
                 'summary': location,
                 'location': location,
                 'description': notes,
-                'start': { 'date': dateStr },
-                'end': { 'date': dateStr },
+                'start': {
+                    'dateTime': startDateTime.toISOString(),
+                    'timeZone': 'Europe/London'
+                },
+                'end': {
+                    'dateTime': endDateTime.toISOString(),
+                    'timeZone': 'Europe/London'
+                },
                 'extendedProperties': {
                     'private': {
                         'jobType': type,
@@ -264,16 +251,14 @@
                 'resource': event
             }).then(response => {
                 statusMsg.className = 'status_msg success';
-                statusMsg.innerHTML = '<strong>Success!</strong> Job written to your calendar grid.';
+                statusMsg.innerHTML = '<strong>Success!</strong> Job pinned onto your calendar timeline.';
                 statusMsg.style.display = 'block';
                 
-                // Streamline layout values back to default empty fields
                 document.getElementById('job_price').value = '';
                 document.getElementById('job_location').value = '';
                 document.getElementById('job_notes').value = '';
                 submitBtn.disabled = false;
 
-                // Ping iframe resource location to dynamically refresh grid
                 document.getElementById('calendar_frame').src = document.getElementById('calendar_frame').src;
 
             }).catch(err => {
@@ -282,7 +267,6 @@
                 statusMsg.style.display = 'block';
                 submitBtn.disabled = false;
                 
-                // Handle sudden expiration disconnect errors gracefully
                 if (err.status === 401) {
                     localStorage.removeItem('google_cal_token');
                     document.getElementById('auth_section').style.display = 'block';
