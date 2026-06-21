@@ -726,6 +726,7 @@
                 statusMsg.style.display = 'block';
                 
                 exitEditMode();
+                submitBtn.disabled = false; 
                 loadRecentJobs();
                 
                 if (document.getElementById('search_query').value.trim()) {
