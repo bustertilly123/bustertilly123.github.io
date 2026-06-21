@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Booker & Schedule View 1.0</title>
+    <title>Job Booker & Search Dashboard</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
@@ -12,7 +12,8 @@
             padding: 20px;
             margin: 0;
         }
-        h1 { color: #ffffff; border-bottom: 2px solid #333; padding-bottom: 10px; margin-top: 0; }
+        h1, h2 { color: #ffffff; border-bottom: 2px solid #333; padding-bottom: 10px; margin-top: 0; }
+        h2 { font-size: 20px; margin-bottom: 15px; }
         
         .dashboard {
             display: flex;
@@ -20,8 +21,8 @@
             max-width: 1400px;
             margin: 0 auto;
         }
-        .left-panel { flex: 1; max-width: 500px; }
-        .right-panel { flex: 1.5; min-height: 680px; display: flex; flex-direction: column; }
+        .left-panel { flex: 1; max-width: 450px; }
+        .right-panel { flex: 2; display: flex; flex-direction: column; gap: 20px; }
 
         .form-group { margin-bottom: 15px; }
         label { display: block; margin-bottom: 5px; font-weight: bold; color: #cccccc; }
@@ -50,30 +51,39 @@
         .btn:hover { background-color: #0369a1; }
         .btn:disabled { background-color: #444; color: #888; cursor: not-allowed; }
         
-        #status_msg { margin-top: 15px; padding: 10px; border-radius: 5px; display: none; }
+        .search-row { display: flex; gap: 10px; margin-bottom: 15px; }
+        .btn-search { width: auto; padding: 10px 25px; }
+
+        #status_msg, #search_status { margin-top: 15px; padding: 10px; border-radius: 5px; display: none; }
         .success { background-color: #065f46; color: #34d399; }
         .error { background-color: #881337; color: #fca5a5; }
         
-        .auth-panel {
+        .auth-panel, .panel-box {
             background-color: #1e1e1e;
             padding: 15px;
             border-radius: 5px;
-            margin-bottom: 20px;
             border-left: 4px solid #0284c7;
         }
-        
-        iframe {
-            width: 100%;
-            height: 100%;
-            flex-grow: 1;
-            border: 1px solid #333;
-            border-radius: 8px;
-            background-color: #1e1e1e;
+
+        /* Search Results Styles */
+        .results-list { max-height: 250px; overflow-y: auto; margin-top: 10px; }
+        .job-card {
+            background: #252525;
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            border: 1px solid #383838;
         }
+        .job-card-header { display: flex; justify-content: space-between; font-weight: bold; color: #fff; margin-bottom: 5px; }
+        .job-meta { font-size: 13px; color: #0284c7; display: flex; gap: 15px; }
+        .job-notes { font-size: 13px; color: #aaa; margin-top: 6px; font-style: italic; }
+        .price-tag { color: #34d399; font-weight: bold; }
+        
+        .calendar-wrapper { flex-grow: 1; min-height: 450px; }
+        iframe { width: 100%; height: 100%; border: 1px solid #333; border-radius: 8px; background-color: #1e1e1e; }
 
         @media (max-width: 900px) {
             .dashboard { flex-direction: column; }
-            .right-panel { height: 500px; }
         }
     </style>
 </head>
@@ -125,7 +135,21 @@
         </div>
 
         <div class="right-panel">
-            <iframe id="calendar_frame" src="https://calendar.google.com/calendar/embed?src=bustertilly123%40gmail.com&ctz=Europe%2FLondon&wkst=2&mode=WEEK&showPrint=0&showTabs=0&showCalendars=0&showTz=0&bgcolor=%231e1e1e"></iframe>
+            
+            <div class="panel-box" id="search_panel" style="opacity: 0.3; pointer-events: none;">
+                <h2>Search Job History</h2>
+                <div class="search-row">
+                    <input type="text" id="search_query" placeholder="Type address, keywords, or customer details...">
+                    <button class="btn btn-search" onclick="searchCalendarJobs()">Search</button>
+                </div>
+                <div id="search_status"></div>
+                <div class="results-list" id="search_results"></div>
+            </div>
+
+            <div class="calendar-wrapper">
+                <iframe id="calendar_frame" src="https://calendar.google.com/calendar/embed?src=bustertilly123%40gmail.com&ctz=Europe%2FLondon&wkst=2&mode=WEEK&showPrint=0&showTabs=0&showCalendars=0&showTz=0&bgcolor=%231e1e1e"></iframe>
+            </div>
+
         </div>
 
     </div>
@@ -162,8 +186,12 @@
         function unlockForm() {
             document.getElementById('system_status').style.display = 'none';
             document.getElementById('auth_section').style.display = 'none';
+            
+            // Unlock both the booking form and the search panel
             document.getElementById('job_form').style.opacity = '1';
             document.getElementById('job_form').style.pointerEvents = 'auto';
+            document.getElementById('search_panel').style.opacity = '1';
+            document.getElementById('search_panel').style.pointerEvents = 'auto';
         }
 
         function gapiLoaded() {
@@ -206,6 +234,73 @@
             tokenClient.requestAccessToken({prompt: 'consent'});
         }
 
+        // ─── SEARCH FUNCTIONALITY ──────────────────────────────────────────
+        function searchCalendarJobs() {
+            const query = document.getElementById('search_query').value.trim();
+            const resultsContainer = document.getElementById('search_results');
+            const searchStatus = document.getElementById('search_status');
+            
+            resultsContainer.innerHTML = '';
+            if (!query) {
+                searchStatus.style.display = 'none';
+                return;
+            }
+
+            searchStatus.className = 'success';
+            searchStatus.style.backgroundColor = '#1e3a8a';
+            searchStatus.style.color = '#93c5fd';
+            searchStatus.innerHTML = '🔍 Querying database history...';
+            searchStatus.style.display = 'block';
+
+            // Call list endpoint filtering directly via text query parameter 'q'
+            gapi.client.calendar.events.list({
+                'calendarId': 'primary',
+                'q': query,
+                'maxResults': 25,
+                'orderBy': 'startTime',
+                'singleEvents': true
+            }).then(response => {
+                const events = response.result.items;
+                searchStatus.style.display = 'none';
+
+                if (!events || events.length === 0) {
+                    resultsContainer.innerHTML = '<div style="color: #aaa; padding: 10px;">No matching historical records found.</div>';
+                    return;
+                }
+
+                events.forEach(event => {
+                    // Extract custom properties safely if they exist
+                    const extended = event.extendedProperties?.private || {};
+                    const price = extended.price ? `£${extended.price}` : 'No price set';
+                    const type = extended.jobType ? `${extended.jobType} Template` : 'Standard Job';
+                    
+                    // Format human readable date from ISO stamp
+                    const dateObj = new Date(event.start.dateTime || event.start.date);
+                    const formattedDate = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+                    const card = document.createElement('div');
+                    card.className = 'job-card';
+                    card.innerHTML = `
+                        <div class="job-card-header">
+                            <span>📍 ${event.summary}</span>
+                            <span class="price-tag">${price}</span>
+                        </div>
+                        <div class="job-meta">
+                            <span>📅 ${formattedDate}</span>
+                            <span>📋 ${type}</span>
+                        </div>
+                        ${event.description ? `<div class="job-notes">${event.description}</div>` : ''}
+                    `;
+                    resultsContainer.appendChild(card);
+                });
+            }).catch(err => {
+                searchStatus.className = 'error';
+                searchStatus.innerHTML = 'Error querying calendar data: ' + err.result.error.message;
+                searchStatus.style.display = 'block';
+            });
+        }
+
+        // ─── BOOKING ENGINE ────────────────────────────────────────────────
         function submitJobToCalendar(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit_btn');
@@ -219,30 +314,17 @@
             const location = document.getElementById('job_location').value;
             const notes = document.getElementById('job_notes').value;
 
-            // ─── LIVE TIMESTAMP CAPTURE ─────────────────────────────────────
-            // Grabs the exact millisecond you press the button
             const startDateTime = new Date();
-            
-            // Sets the duration block to exactly 1 hour out from right now
             const endDateTime = new Date(startDateTime.getTime() + (60 * 60 * 1000));
 
             const event = {
                 'summary': location,
                 'location': location,
                 'description': notes,
-                'start': {
-                    'dateTime': startDateTime.toISOString(),
-                    'timeZone': 'Europe/London'
-                },
-                'end': {
-                    'dateTime': endDateTime.toISOString(),
-                    'timeZone': 'Europe/London'
-                },
+                'start': { 'dateTime': startDateTime.toISOString(), 'timeZone': 'Europe/London' },
+                'end': { 'dateTime': endDateTime.toISOString(), 'timeZone': 'Europe/London' },
                 'extendedProperties': {
-                    'private': {
-                        'jobType': type,
-                        'price': price
-                    }
+                    'private': { 'jobType': type, 'price': price }
                 }
             };
 
@@ -251,7 +333,7 @@
                 'resource': event
             }).then(response => {
                 statusMsg.className = 'status_msg success';
-                statusMsg.innerHTML = '<strong>Success!</strong> Job pinned onto your calendar timeline.';
+                statusMsg.innerHTML = '<strong>Success!</strong> Job written to calendar.';
                 statusMsg.style.display = 'block';
                 
                 document.getElementById('job_price').value = '';
@@ -260,7 +342,6 @@
                 submitBtn.disabled = false;
 
                 document.getElementById('calendar_frame').src = document.getElementById('calendar_frame').src;
-
             }).catch(err => {
                 statusMsg.className = 'status_msg error';
                 statusMsg.innerHTML = '<strong>Error saving job:</strong> ' + err.result.error.message;
@@ -271,6 +352,7 @@
                     localStorage.removeItem('google_cal_token');
                     document.getElementById('auth_section').style.display = 'block';
                     document.getElementById('job_form').style.opacity = '0.3';
+                    document.getElementById('search_panel').style.opacity = '0.3';
                 }
             });
         }
