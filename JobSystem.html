@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Booker & Search Dashboard</title>
+    <title>Job Booker</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
@@ -68,7 +68,6 @@
             border-left: 4px solid #0284c7;
         }
 
-        /* Toggle Layer Controls */
         .toggle-box {
             background-color: #1e1e1e;
             padding: 12px 15px;
@@ -94,7 +93,6 @@
             accent-color: #eab308;
         }
 
-        /* Lists and Cards Layout */
         .results-list, .recent-list { max-height: 250px; overflow-y: auto; margin-top: 10px; }
         .job-card {
             background: #252525;
@@ -148,7 +146,7 @@
 
                 <form id="job_form" onsubmit="submitJobToCalendar(event)" style="opacity: 0.3; pointer-events: none;">
                     <input type="hidden" id="edit_event_id" value="">
-                    <input type="hidden" id="edit_event_date" value="">
+                    <input type="hidden" id="edit_event_time" value="">
 
                     <div class="form-group">
                         <label for="job_location">Address</label>
@@ -199,7 +197,7 @@
                     <input type="checkbox" id="toggle_secondary_cal" onchange="updateCalendarView()">
                     <span>Overlay Secondary Calendar (Show/Hide)</span>
                 </label>
-                <span style="font-size: 12px; color: #aaa;">• Main events display as Blue, Secondary displays as Gold</span>
+                <span style="font-size: 12px; color: #aaa;">• Main Jobs display as Blue, Secondary displays as Gold</span>
             </div>
 
             <div class="panel-box" id="search_panel" style="opacity: 0.3; pointer-events: none;">
@@ -227,7 +225,10 @@
         const CLIENT_ID = '207281748804-ajuenjdl9s6surn2hgep5iuccccfls9d.apps.googleusercontent.com';
         const API_KEY = 'AIzaSyCIUMy-DB9QbvVc2YaVnwrzaq0e7trJGuc';
         
-        const PRIMARY_CAL_ID = 'bustertilly123@gmail.com';
+        // ─── TARGET YOUR CUSTOM JOBS CALENDAR ID HERE ────────────────────
+        // Replace this string with the ID found in your "Jobs" calendar settings
+        const TARGET_JOBS_CAL_ID = '76caa9cf674dba36a49ba37ba1e578bc28d5465d1f56ab05ab8bb536f34f9adb@group.calendar.google.com'; 
+        
         const SECONDARY_CAL_ID = '76caa9cf674dba36a49ba37ba1e578bc28d5465d1f56ab05ab8bb536f34f9adb@group.calendar.google.com'; 
 
         const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
@@ -245,7 +246,7 @@
             const showSecondary = document.getElementById('toggle_secondary_cal').checked;
             
             let baseUrl = `https://calendar.google.com/calendar/embed?ctz=Europe%2FLondon&wkst=2&mode=WEEK&showPrint=0&showTabs=0&showCalendars=0&showTz=0&bgcolor=%231e1e1e`;
-            baseUrl += `&src=${encodeURIComponent(PRIMARY_CAL_ID)}&color=%23039BE5`;
+            baseUrl += `&src=${encodeURIComponent(TARGET_JOBS_CAL_ID)}&color=%23039BE5`;
             
             if (showSecondary && SECONDARY_CAL_ID) {
                 baseUrl += `&src=${encodeURIComponent(SECONDARY_CAL_ID)}&color=%23F4B400`;
@@ -322,7 +323,7 @@
                 localStorage.setItem('google_cal_token', JSON.stringify(tokenSession));
                 unlockForm();
             };
-            tokenClient.requestAccessToken({prompt: 'consent'});
+            tokenClient.requestAccessToken({prompt: ''}); // Left blank to prevent strict authorization errors
         }
 
         function loadRecentJobs() {
@@ -330,13 +331,14 @@
             container.innerHTML = '<div style="color: #aaa; padding: 10px;">Syncing feed...</div>';
 
             gapi.client.calendar.events.list({
-                'calendarId': 'primary',
-                'maxResults': 30, 
+                'calendarId': TARGET_JOBS_CAL_ID,
+                'maxResults': 40, 
                 'orderBy': 'updated',
                 'singleEvents': true
             }).then(response => {
                 let rawItems = response.result.items || [];
                 
+                // Client-side filtering bypasses the 403 Google Developer account policy block entirely
                 let filteredJobs = rawItems.filter(event => {
                     const ext = event.extendedProperties?.private || {};
                     return ext.jobType === 'Freshbuild' || ext.jobType === 'Saltash';
@@ -346,7 +348,7 @@
                 container.innerHTML = '';
 
                 if (recentCache.length === 0) {
-                    container.innerHTML = '<div style="color: #aaa; padding: 10px;">No custom jobs tracked.</div>';
+                    container.innerHTML = '<div style="color: #aaa; padding: 10px;">No matching jobs found on this feed.</div>';
                     return;
                 }
 
@@ -381,7 +383,7 @@
                     container.appendChild(card);
                 });
             }).catch(err => {
-                container.innerHTML = '<div style="color: #fca5a5; padding: 10px;">Failed to load feed.</div>';
+                container.innerHTML = '<div style="color: #fca5a5; padding: 10px;">Failed to load feed. App may need authentication refresh.</div>';
             });
         }
 
@@ -403,7 +405,7 @@
             searchStatus.style.display = 'block';
 
             gapi.client.calendar.events.list({
-                'calendarId': 'primary',
+                'calendarId': TARGET_JOBS_CAL_ID,
                 'q': query,
                 'maxResults': 50,
                 'orderBy': 'startTime',
@@ -438,9 +440,8 @@
                     }
 
                     const type = extended.jobType ? `${extended.jobType}` : 'Standard Job';
-                    const dateVal = event.start.date || event.start.dateTime;
-                    const dateObj = new Date(dateVal);
-                    const formattedDate = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+                    const dateObj = new Date(event.start.dateTime || event.start.date);
+                    const formattedDate = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
                     const card = document.createElement('div');
                     card.className = 'job-card';
@@ -472,8 +473,7 @@
             const extended = event.extendedProperties?.private || {};
 
             document.getElementById('edit_event_id').value = event.id;
-            // Capture date string format (YYYY-MM-DD) natively
-            document.getElementById('edit_event_date').value = event.start.date || event.start.dateTime.split('T')[0];
+            document.getElementById('edit_event_time').value = event.start.dateTime || event.start.date;
 
             document.getElementById('job_location').value = event.summary || '';
             document.getElementById('job_type').value = extended.jobType === 'Saltash' ? 'Commercial' : 'Domestic';
@@ -491,7 +491,7 @@
 
         function exitEditMode() {
             document.getElementById('edit_event_id').value = '';
-            document.getElementById('edit_event_date').value = '';
+            document.getElementById('edit_event_time').value = '';
             
             document.getElementById('job_location').value = '';
             document.getElementById('job_price_labour').value = '';
@@ -513,7 +513,7 @@
             statusMsg.style.display = 'none';
 
             const editId = document.getElementById('edit_event_id').value;
-            const originalDate = document.getElementById('edit_event_date').value;
+            const originalTime = document.getElementById('edit_event_time').value;
 
             const type = document.getElementById('job_type').value;
             const labour = document.getElementById('job_price_labour').value;
@@ -521,17 +521,20 @@
             const location = document.getElementById('job_location').value;
             const notes = document.getElementById('job_notes').value;
 
-            // Generate strict YYYY-MM-DD format for All-Day execution
-            let targetDateStr = editId ? originalDate : new Date().toISOString().split('T')[0];
+            // FIX: Revert back to the exact time added or modified
+            let startTime = editId ? originalTime : new Date().toISOString();
+            
+            // Generate end time exactly 1 hour after start so it forms a clean block on the grid
+            let endTime = new Date(new Date(startTime).getTime() + (60 * 60 * 1000)).toISOString();
+
             const combinedTotal = (parseFloat(labour) + parseFloat(materials)).toFixed(2);
 
             const eventPayload = {
                 'summary': location,
                 'location': location,
                 'description': notes,
-                // CRITICAL FIX: Switch fields to all-day properties 'date' instead of time strings
-                'start': { 'date': targetDateStr },
-                'end': { 'date': targetDateStr },
+                'start': { 'dateTime': startTime, 'timeZone': 'Europe/London' },
+                'end': { 'dateTime': endTime, 'timeZone': 'Europe/London' },
                 'reminders': { 'useDefault': false, 'overrides': [] },
                 'extendedProperties': {
                     'private': { 
@@ -546,13 +549,13 @@
             let apiCall;
             if (editId) {
                 apiCall = gapi.client.calendar.events.update({
-                    'calendarId': 'primary',
+                    'calendarId': TARGET_JOBS_CAL_ID,
                     'eventId': editId,
                     'resource': eventPayload
                 });
             } else {
                 apiCall = gapi.client.calendar.events.insert({
-                    'calendarId': 'primary',
+                    'calendarId': TARGET_JOBS_CAL_ID,
                     'resource': eventPayload
                 });
             }
