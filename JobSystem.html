@@ -92,7 +92,7 @@
     <div class="dashboard">
         
         <div class="left-panel">
-            <h1>Book New Job</h1>
+            <h1>Add New Job</h1>
 
             <div class="auth-panel" id="system_status">
                 <p style="margin: 0 0 5px 0; font-weight: bold;">Connection Status:</p>
@@ -106,25 +106,30 @@
 
             <form id="job_form" onsubmit="submitJobToCalendar(event)" style="opacity: 0.3; pointer-events: none;">
                 <div class="form-group">
-                    <label for="job_location">Site Address (Calendar Title)</label>
-                    <input type="text" id="job_location" placeholder="e.g., 123 High St, Bromley" required>
+                    <label for="job_location">Address</label>
+                    <input type="text" id="job_location" placeholder="Job Address...." required>
                 </div>
 
                 <div class="form-group">
-                    <label for="job_type">Job / Invoice Type</label>
+                    <label for="job_type">Job Type</label>
                     <select id="job_type">
-                        <option value="Domestic">Domestic Template</option>
-                        <option value="Commercial">Commercial Template</option>
+                        <option value="Domestic">Freshbuild</option>
+                        <option value="Commercial">Saltash</option>
                     </select>
                 </div>
 
                 <div class="form-group">
-                    <label for="job_price">Quoted Price (£)</label>
-                    <input type="number" id="job_price" placeholder="e.g., 450" step="0.01" required>
+                    <label for="job_price">Labour Price (£)</label>
+                    <input type="number" id="job_price" placeholder="£000.000" step="0.01" required>
                 </div>
 
                 <div class="form-group">
-                    <label for="job_notes">Job Notes / Materials</label>
+                    <label for="job_price">Material Price (£)</label>
+                    <input type="number" id="job_price" placeholder="£000.000" step="0.01" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="job_notes">Job Description</label>
                     <textarea id="job_notes" rows="4" placeholder="List notes here..."></textarea>
                 </div>
 
