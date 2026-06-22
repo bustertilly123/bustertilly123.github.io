@@ -327,7 +327,7 @@
         </div>
     </div>
 
-    <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.umd.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
     <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
@@ -350,7 +350,7 @@
         let searchCache = []; 
         let recentCache = []; 
         let globalFetchedJobs = []; 
-        let compiledInvoiceGroups = {}; // Stores raw mapping details for modal indexing
+        let compiledInvoiceGroups = {}; 
 
         function updateCalendarView() {
             const iframe = document.getElementById('calendar_frame');
@@ -420,6 +420,7 @@
         
         function checkInitStatus() {
             if (gapiInited && gisInited) {
+                document.getElementById('gapi_state').innerText = "⏳ Checking authentication cache...";
                 if (checkExistingToken()) return; 
                 document.getElementById('system_status').style.display = 'none';
                 document.getElementById('auth_section').style.display = 'block';
@@ -624,7 +625,6 @@
                 return;
             }
 
-            // Clear cache container for updates
             compiledInvoiceGroups = {};
 
             globalFetchedJobs.forEach(event => {
@@ -721,7 +721,6 @@
             wrapper.innerHTML = tableHtml;
         }
 
-        // Operational controls for the modal overlay
         function openExportModal(weekKey) {
             const group = compiledInvoiceGroups[weekKey];
             if (!group) return;
@@ -729,7 +728,6 @@
             document.getElementById('modal_week_key').value = weekKey;
             document.getElementById('modal_week_title').innerText = group.title;
 
-            // Handle Freshbuild visibility
             if (group.Freshbuild.count > 0) {
                 const totalFB = group.Freshbuild.labour + group.Freshbuild.materials;
                 document.getElementById('modal_fb_totals').innerText = `£${totalFB.toFixed(2)}`;
@@ -738,7 +736,6 @@
                 document.getElementById('modal_fb_box').style.display = 'none';
             }
 
-            // Handle Saltash visibility
             if (group.Saltash.count > 0) {
                 const totalSA = group.Saltash.labour + group.Saltash.materials;
                 document.getElementById('modal_sa_totals').innerText = `£${totalSA.toFixed(2)}`;
@@ -747,7 +744,6 @@
                 document.getElementById('modal_sa_box').style.display = 'none';
             }
 
-            // Autofill or reset input fields
             document.getElementById('invoice_num_fb').value = '';
             document.getElementById('invoice_num_sa').value = '';
 
@@ -758,7 +754,7 @@
             document.getElementById('export_modal').style.display = 'none';
         }
 
-        // Document Export Engines: Word Document Generator Engine (.docx)
+        // Fixed syntax layout block inside the Word builder framework setup
         function triggerDocxExport() {
             const weekKey = document.getElementById('modal_week_key').value;
             const group = compiledInvoiceGroups[weekKey];
@@ -767,11 +763,10 @@
             const invFB = document.getElementById('invoice_num_fb').value.trim() || 'NOT_ASSIGNED';
             const invSA = document.getElementById('invoice_num_sa').value.trim() || 'NOT_ASSIGNED';
 
-            const { Document, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, HeadingLevel, AlignmentType } = docx;
+            const { Document, Paragraph, Table, TableRow, TableCell, WidthType, HeadingLevel, AlignmentType } = window.docx;
 
             const contentSections = [];
 
-            // Add Header Block
             contentSections.push(
                 new Paragraph({
                     text: "WEEKLY INVOICE STATEMENT",
@@ -821,7 +816,6 @@
                     );
                 });
 
-                // Summary Row Block
                 const grand = subGroup.labour + subGroup.materials;
                 tableRows.push(
                     new TableRow({
@@ -848,7 +842,7 @@
                 }]
             });
 
-            docx.Packer.toBlob(doc).then(blob => {
+            window.docx.Packer.toBlob(doc).then(blob => {
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
@@ -860,7 +854,6 @@
             });
         }
 
-        // Document Export Engines: Excel Spreadsheets Builder Engine (.xlsx)
         function triggerExcelExport() {
             const weekKey = document.getElementById('modal_week_key').value;
             const group = compiledInvoiceGroups[weekKey];
@@ -884,7 +877,6 @@
                     const m = parseFloat(ext.materialPrice || 0);
                     sheetData.push([j.summary || "No Address", typeName, invNum, l, m, (l + m)]);
                 });
-                // Add subtotal row directly below
                 const tot = subGroup.labour + subGroup.materials;
                 sheetData.push([`Total ${typeName} Subtotal`, "", "", subGroup.labour, subGroup.materials, tot], []);
             };
