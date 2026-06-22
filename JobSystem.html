@@ -3,7 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Booker & Invoice Tracker</title>
+    <!-- FIX 1: CSP meta tag allowing Google APIs, CDNs, and required external resources -->
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline' 'unsafe-eval'
+            https://apis.google.com
+            https://accounts.google.com
+            https://unpkg.com
+            https://cdn.jsdelivr.net;
+        style-src 'self' 'unsafe-inline';
+        frame-src https://calendar.google.com;
+        connect-src 'self'
+            https://www.googleapis.com
+            https://accounts.google.com
+            https://oauth2.googleapis.com
+            https://calendar.googleapis.com;
+        img-src 'self' data: https:;
+        font-src 'self' https:;
+    ">
+    <title>Job Booker</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
@@ -129,7 +147,6 @@
         .calendar-wrapper { flex-grow: 1; min-height: 450px; }
         iframe { width: 100%; height: 100%; border: 1px solid #333; border-radius: 8px; background-color: #1e1e1e; }
 
-        /* Invoice Table Styles */
         .invoice-table-wrapper { overflow-x: auto; margin-top: 15px; }
         .invoice-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
         .invoice-table th, .invoice-table td { padding: 10px; border: 1px solid #333; }
@@ -141,7 +158,6 @@
         .badge-freshbuild { background-color: #1e3a8a; color: #93c5fd; }
         .badge-saltash { background-color: #78350f; color: #fef08a; }
 
-        /* Modal Overlay Interface styling */
         .modal-overlay {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -327,157 +343,160 @@
         </div>
     </div>
 
+    <!-- FIX 2: Load CDN libraries BEFORE Google APIs so they're available immediately -->
     <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
-    <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
-    <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
-
     <script>
-        // Emergency fallback initialization to bypass library blocks if CDNs act up
-        window.addEventListener('DOMContentLoaded', () => {
-            setTimeout(() => {
-                if (!window.docx) {
-                    console.warn("docx library failed to load via CDN. Initializing fallback objects to restore application flow.");
-                    window.docx = {
-                        Document: class {}, Paragraph: class {}, Table: class {}, 
-                        TableRow: class {}, TableCell: class {}, WidthType: {}, 
-                        HeadingLevel: {}, AlignmentType: {}, Packer: { toBlob: () => Promise.resolve(new Blob()) }
-                    };
-                    // Manually force checks to unstick UI if callbacks didn't fire cleanly
-                    if (typeof gapiLoaded === 'function' && !gapiInited) gapiLoaded();
-                    if (typeof gisLoaded === 'function' && !gisInited) gisLoaded();
-                }
-            }, 2500);
-        });
-
+        // ─── CONFIGURATION ───────────────────────────────────────────────────────────
         const CLIENT_ID = '207281748804-ajuenjdl9s6surn2hgep5iuccccfls9d.apps.googleusercontent.com';
-        const API_KEY = 'AIzaSyCIUMy-DB9QbvVc2YaVnwrzaq0e7trJGuc';
+        const API_KEY   = 'AIzaSyCIUMy-DB9QbvVc2YaVnwrzaq0e7trJGuc';
         
-        const TARGET_JOBS_CAL_ID = '76caa9cf674dba36a49ba37ba1e578bc28d5465d1f56ab05ab8bb536f34f9adb@group.calendar.google.com'; 
-        const SECONDARY_CAL_ID = '76caa9cf674dba36a49ba37ba1e578bc28d5465d1f56ab05ab8bb536f34f9adb@group.calendar.google.com'; 
+        const TARGET_JOBS_CAL_ID = '76caa9cf674dba36a49ba37ba1e578bc28d5465d1f56ab05ab8bb536f34f9adb@group.calendar.google.com';
+        // FIX 3: Secondary calendar ID must be DIFFERENT to the primary to avoid the
+        // "permission" calendar error. Set your real secondary ID here, or leave blank
+        // to disable the overlay toggle until you have one configured.
+        const SECONDARY_CAL_ID  = ''; // <-- paste your secondary calendar ID here
 
         const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest';
-        const SCOPES = 'https://www.googleapis.com/auth/calendar.events';
+        const SCOPES        = 'https://www.googleapis.com/auth/calendar.events';
 
+        // ─── STATE ───────────────────────────────────────────────────────────────────
         let gapiInited = false;
-        let gisInited = false;
+        let gisInited  = false;
         let tokenClient;
-        
-        let searchCache = []; 
-        let recentCache = []; 
-        let globalFetchedJobs = []; 
-        let compiledInvoiceGroups = {}; 
 
+        let searchCache          = [];
+        let recentCache          = [];
+        let globalFetchedJobs    = [];
+        let compiledInvoiceGroups = {};
+
+        // ─── CALENDAR IFRAME ─────────────────────────────────────────────────────────
         function updateCalendarView() {
-            const iframe = document.getElementById('calendar_frame');
+            const iframe        = document.getElementById('calendar_frame');
             const showSecondary = document.getElementById('toggle_secondary_cal').checked;
             
             let baseUrl = `https://calendar.google.com/calendar/embed?ctz=Europe%2FLondon&wkst=2&mode=WEEK&showPrint=0&showTabs=0&showCalendars=0&showTz=0&bgcolor=%231e1e1e`;
             baseUrl += `&src=${encodeURIComponent(TARGET_JOBS_CAL_ID)}&color=%23039BE5`;
             
-            if (showSecondary && SECONDARY_CAL_ID) {
+            // Only add secondary src if a distinct ID has been configured
+            if (showSecondary && SECONDARY_CAL_ID && SECONDARY_CAL_ID !== TARGET_JOBS_CAL_ID) {
                 baseUrl += `&src=${encodeURIComponent(SECONDARY_CAL_ID)}&color=%23F4B400`;
             }
             
             iframe.src = baseUrl;
         }
 
-        window.addEventListener('DOMContentLoaded', updateCalendarView);
+        // ─── GOOGLE API LOADING ──────────────────────────────────────────────────────
+        // FIX 4: Define gapiLoaded and gisLoaded on window BEFORE the scripts load
+        // so the onload= callbacks can always find them regardless of timing.
+        window.gapiLoaded = function() {
+            gapi.load('client', function() {
+                gapi.client.init({
+                    apiKey: API_KEY,
+                    discoveryDocs: [DISCOVERY_DOC]
+                }).then(function() {
+                    gapiInited = true;
+                    checkInitStatus();
+                }).catch(function(err) {
+                    console.error('Error initializing GAPI client:', err);
+                    document.getElementById('gapi_state').innerText = '❌ Failed to initialize Google API. Check API key and try refreshing.';
+                });
+            });
+        };
 
+        window.gisLoaded = function() {
+            // FIX 5: Guard against google.accounts not yet being available
+            if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
+                console.error('Google Identity Services not available');
+                return;
+            }
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: CLIENT_ID,
+                scope: SCOPES,
+                callback: '', // set dynamically in handleAuthClick
+            });
+            gisInited = true;
+            checkInitStatus();
+        };
+
+        function checkInitStatus() {
+            if (gapiInited && gisInited) {
+                document.getElementById('gapi_state').innerText = '⏳ Checking authentication cache...';
+                if (checkExistingToken()) return;
+                document.getElementById('system_status').style.display = 'none';
+                document.getElementById('auth_section').style.display = 'block';
+            }
+        }
+
+        // ─── AUTH ─────────────────────────────────────────────────────────────────────
         function checkExistingToken() {
-            const savedTokenString = localStorage.getItem('google_cal_token');
-            if (savedTokenString) {
+            try {
+                const savedTokenString = localStorage.getItem('google_cal_token');
+                if (!savedTokenString) return false;
                 const tokenData = JSON.parse(savedTokenString);
                 if (Date.now() < tokenData.expiry) {
                     gapi.client.setToken({ access_token: tokenData.access_token });
                     unlockForm();
                     return true;
                 } else {
-                    localStorage.removeItem('google_cal_token'); 
+                    localStorage.removeItem('google_cal_token');
                 }
+            } catch (e) {
+                localStorage.removeItem('google_cal_token');
             }
             return false;
         }
 
-        function unlockForm() {
-            document.getElementById('system_status').style.display = 'none';
-            document.getElementById('auth_section').style.display = 'none';
-            
-            document.getElementById('job_form').style.opacity = '1';
-            document.getElementById('job_form').style.pointerEvents = 'auto';
-            document.getElementById('search_panel').style.opacity = '1';
-            document.getElementById('search_panel').style.pointerEvents = 'auto';
-            document.getElementById('recent_panel').style.opacity = '1';
-            document.getElementById('recent_panel').style.pointerEvents = 'auto';
-            document.getElementById('invoice_panel').style.opacity = '1';
-            document.getElementById('invoice_panel').style.pointerEvents = 'auto';
-
-            loadRecentJobs();
-        }
-
-        function gapiLoaded() {
-            gapi.load('client', () => {
-                gapi.client.init({ apiKey: API_KEY, discoveryDocs: [DISCOVERY_DOC] }).then(() => {
-                    gapiInited = true;
-                    checkInitStatus();
-                }).catch(err => console.error("Error initializing GAPI client", err));
-            });
-        }
-
-        function gisLoaded() {
-            if (window.google && window.google.accounts && window.google.accounts.oauth2) {
-                tokenClient = google.accounts.oauth2.initTokenClient({
-                    client_id: CLIENT_ID,
-                    scope: SCOPES,
-                    callback: '', 
-                });
-                gisInited = true;
-                checkInitStatus();
-            }
-        }
-        
-        function checkInitStatus() {
-            if (gapiInited && gisInited) {
-                document.getElementById('gapi_state').innerText = "⏳ Checking authentication cache...";
-                if (checkExistingToken()) return; 
-                document.getElementById('system_status').style.display = 'none';
-                document.getElementById('auth_section').style.display = 'block';
-            }
-        }
-
         function handleAuthClick() {
-            tokenClient.callback = async (resp) => {
-                if (resp.error !== undefined) throw (resp);
+            tokenClient.callback = function(resp) {
+                if (resp.error !== undefined) {
+                    console.error('Auth error:', resp);
+                    return;
+                }
                 const tokenSession = {
                     access_token: resp.access_token,
-                    expiry: Date.now() + (55 * 60 * 1000) 
+                    expiry: Date.now() + (55 * 60 * 1000) // 55 minutes
                 };
                 localStorage.setItem('google_cal_token', JSON.stringify(tokenSession));
                 unlockForm();
             };
-            tokenClient.requestAccessToken({prompt: ''});
+            tokenClient.requestAccessToken({ prompt: '' });
         }
 
+        function unlockForm() {
+            document.getElementById('system_status').style.display  = 'none';
+            document.getElementById('auth_section').style.display   = 'none';
+
+            ['job_form', 'search_panel', 'recent_panel', 'invoice_panel'].forEach(function(id) {
+                const el = document.getElementById(id);
+                el.style.opacity       = '1';
+                el.style.pointerEvents = 'auto';
+            });
+
+            loadRecentJobs();
+        }
+
+        // ─── JOB LOADING ─────────────────────────────────────────────────────────────
         function loadRecentJobs() {
             const container = document.getElementById('recent_results');
             container.innerHTML = '<div style="color: #aaa; padding: 10px;">Syncing feed...</div>';
 
             gapi.client.calendar.events.list({
-                'calendarId': TARGET_JOBS_CAL_ID,
-                'maxResults': 60, 
-                'orderBy': 'updated',
-                'singleEvents': true
-            }).then(response => {
-                let rawItems = response.result.items || [];
-                
-                let filteredJobs = rawItems.filter(event => {
-                    const ext = event.extendedProperties?.private || {};
+                calendarId:    TARGET_JOBS_CAL_ID,
+                maxResults:    60,
+                orderBy:       'updated',
+                singleEvents:  true
+            }).then(function(response) {
+                const rawItems = response.result.items || [];
+
+                const filteredJobs = rawItems.filter(function(event) {
+                    const ext = (event.extendedProperties || {}).private || {};
                     return ext.jobType === 'Freshbuild' || ext.jobType === 'Saltash';
                 });
 
-                globalFetchedJobs = [...filteredJobs]; 
-                recentCache = filteredJobs.reverse().slice(0, 8); 
+                globalFetchedJobs = filteredJobs.slice();
+                recentCache       = filteredJobs.reverse().slice(0, 8);
                 container.innerHTML = '';
 
                 if (recentCache.length === 0) {
@@ -486,28 +505,22 @@
                     return;
                 }
 
-                recentCache.forEach((event, index) => {
-                    const extended = event.extendedProperties?.private || {};
-                    let pricingDisplay = '';
-                    if (extended.labourPrice || extended.materialPrice) {
-                        const L = extended.labourPrice ? parseFloat(extended.labourPrice).toFixed(2) : '0.00';
-                        const M = extended.materialPrice ? parseFloat(extended.materialPrice).toFixed(2) : '0.00';
-                        pricingDisplay = `£${(parseFloat(L)+parseFloat(M)).toFixed(2)} (L:£${L} M:£${M})`;
-                    } else if (extended.price) {
-                        pricingDisplay = `£${parseFloat(extended.price).toFixed(2)}`;
-                    } else {
-                        pricingDisplay = '£0.00';
-                    }
+                recentCache.forEach(function(event, index) {
+                    const extended      = (event.extendedProperties || {}).private || {};
+                    const pricingDisplay = buildPricingDisplay(extended);
 
-                    const card = document.createElement('div');
-                    card.className = 'job-card';
+                    const card      = document.createElement('div');
+                    card.className  = 'job-card';
                     card.style.borderLeft = '3px solid #eab308';
-                    card.style.cursor = 'pointer';
-                    card.onclick = (e) => {
-                        e.stopPropagation();
-                        populateFormFromCache(recentCache[index]);
-                    };
-                    
+                    card.style.cursor     = 'pointer';
+                    // FIX 6: Capture index in closure correctly
+                    card.onclick = (function(idx) {
+                        return function(e) {
+                            e.stopPropagation();
+                            populateFormFromCache(recentCache[idx]);
+                        };
+                    })(index);
+
                     card.innerHTML = `
                         <div class="job-card-header" style="font-size:14px;">
                             <span>📍 ${event.summary || 'Untitled'}</span>
@@ -521,44 +534,46 @@
                 });
 
                 buildInvoiceTable();
-            }).catch(err => {
+            }).catch(function(err) {
+                console.error('loadRecentJobs error:', err);
                 container.innerHTML = '<div style="color: #fca5a5; padding: 10px;">Failed to load feed. App may need authentication refresh.</div>';
             });
         }
 
+        // ─── SEARCH ──────────────────────────────────────────────────────────────────
         function searchCalendarJobs() {
-            const query = document.getElementById('search_query').value.trim();
+            const query           = document.getElementById('search_query').value.trim();
             const resultsContainer = document.getElementById('search_results');
-            const searchStatus = document.getElementById('search_status');
-            
+            const searchStatus    = document.getElementById('search_status');
+
             resultsContainer.innerHTML = '';
             if (!query) {
                 searchStatus.style.display = 'none';
                 return;
             }
 
-            searchStatus.className = 'success';
+            searchStatus.className         = 'success';
             searchStatus.style.backgroundColor = '#1e3a8a';
-            searchStatus.style.color = '#93c5fd';
-            searchStatus.innerHTML = '🔍 Querying database history...';
-            searchStatus.style.display = 'block';
+            searchStatus.style.color       = '#93c5fd';
+            searchStatus.innerHTML         = '🔍 Querying database history...';
+            searchStatus.style.display     = 'block';
 
             gapi.client.calendar.events.list({
-                'calendarId': TARGET_JOBS_CAL_ID,
-                'q': query,
-                'maxResults': 50,
-                'orderBy': 'startTime',
-                'singleEvents': true
-            }).then(response => {
+                calendarId:   TARGET_JOBS_CAL_ID,
+                q:            query,
+                maxResults:   50,
+                orderBy:      'startTime',
+                singleEvents: true
+            }).then(function(response) {
                 const rawSearch = response.result.items || [];
-                
-                searchCache = rawSearch.filter(event => {
-                    const ext = event.extendedProperties?.private || {};
+
+                searchCache = rawSearch.filter(function(event) {
+                    const ext = (event.extendedProperties || {}).private || {};
                     return ext.jobType === 'Freshbuild' || ext.jobType === 'Saltash';
                 });
 
-                searchCache.forEach(se => {
-                    if(!globalFetchedJobs.find(x => x.id === se.id)) {
+                searchCache.forEach(function(se) {
+                    if (!globalFetchedJobs.find(function(x) { return x.id === se.id; })) {
                         globalFetchedJobs.push(se);
                     }
                 });
@@ -570,26 +585,25 @@
                     return;
                 }
 
-                searchCache.forEach((event, index) => {
-                    const extended = event.extendedProperties?.private || {};
-                    
-                    let pricingDisplay = '';
-                    if (extended.labourPrice || extended.materialPrice) {
-                        const L = extended.labourPrice ? parseFloat(extended.labourPrice).toFixed(2) : '0.00';
-                        const M = extended.materialPrice ? parseFloat(extended.materialPrice).toFixed(2) : '0.00';
-                        pricingDisplay = `L: £${L}<br>M: £${M}`;
-                    } else if (extended.price) {
-                        pricingDisplay = `Total: £${parseFloat(extended.price).toFixed(2)}`;
-                    } else {
-                        pricingDisplay = 'No price set';
-                    }
+                searchCache.forEach(function(event, index) {
+                    const extended       = (event.extendedProperties || {}).private || {};
+                    const pricingDisplay = buildPricingDisplaySearch(extended);
+                    const type           = extended.jobType || 'Standard Job';
+                    const dateObj        = new Date(event.start.dateTime || event.start.date);
+                    const formattedDate  = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-                    const type = extended.jobType ? `${extended.jobType}` : 'Standard Job';
-                    const dateObj = new Date(event.start.dateTime || event.start.date);
-                    const formattedDate = dateObj.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                    const card      = document.createElement('div');
+                    card.className  = 'job-card';
 
-                    const card = document.createElement('div');
-                    card.className = 'job-card';
+                    // FIX 7: Inline edit button uses closure — avoids broken searchCache[index] in innerHTML
+                    const editBtn   = document.createElement('button');
+                    editBtn.type    = 'button';
+                    editBtn.className = 'btn-inline-edit';
+                    editBtn.textContent = 'Edit Job';
+                    editBtn.onclick = (function(idx) {
+                        return function() { populateFormFromCache(searchCache[idx]); };
+                    })(index);
+
                     card.innerHTML = `
                         <div class="job-card-header">
                             <span>📍 ${event.summary}</span>
@@ -600,39 +614,65 @@
                                 <span>📅 ${formattedDate}</span> | 
                                 <span>📋 ${type}</span>
                             </div>
-                            <button type="button" class="btn-inline-edit" onclick="populateFormFromCache(searchCache[index])">Edit Job</button>
                         </div>
                         ${event.description ? `<div class="job-notes">${event.description}</div>` : ''}
                     `;
+                    // Append the button safely (not via innerHTML to keep the closure)
+                    card.querySelector('.job-meta').appendChild(editBtn);
                     resultsContainer.appendChild(card);
                 });
 
                 buildInvoiceTable();
-            }).catch(err => {
+            }).catch(function(err) {
+                console.error('searchCalendarJobs error:', err);
                 searchStatus.className = 'error';
-                searchStatus.innerHTML = 'Error querying calendar data: ' + err.result.error.message;
+                searchStatus.innerHTML = 'Error querying calendar data: ' + ((err.result && err.result.error && err.result.error.message) || 'Unknown error');
                 searchStatus.style.display = 'block';
             });
         }
 
+        // ─── HELPERS ─────────────────────────────────────────────────────────────────
+        function buildPricingDisplay(extended) {
+            if (extended.labourPrice || extended.materialPrice) {
+                const L = extended.labourPrice   ? parseFloat(extended.labourPrice).toFixed(2)   : '0.00';
+                const M = extended.materialPrice ? parseFloat(extended.materialPrice).toFixed(2) : '0.00';
+                return `£${(parseFloat(L) + parseFloat(M)).toFixed(2)} (L:£${L} M:£${M})`;
+            } else if (extended.price) {
+                return `£${parseFloat(extended.price).toFixed(2)}`;
+            }
+            return '£0.00';
+        }
+
+        function buildPricingDisplaySearch(extended) {
+            if (extended.labourPrice || extended.materialPrice) {
+                const L = extended.labourPrice   ? parseFloat(extended.labourPrice).toFixed(2)   : '0.00';
+                const M = extended.materialPrice ? parseFloat(extended.materialPrice).toFixed(2) : '0.00';
+                return `L: £${L}<br>M: £${M}`;
+            } else if (extended.price) {
+                return `Total: £${parseFloat(extended.price).toFixed(2)}`;
+            }
+            return 'No price set';
+        }
+
+        // ─── INVOICE TABLE ────────────────────────────────────────────────────────────
         function getYearAndWeekString(dateInstance) {
-            const d = new Date(Date.UTC(dateInstance.getFullYear(), dateInstance.getMonth(), dateInstance.getDate()));
+            const d      = new Date(Date.UTC(dateInstance.getFullYear(), dateInstance.getMonth(), dateInstance.getDate()));
             const dayNum = d.getUTCDay() || 7;
             d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-            const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
-            const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-            
+            const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+            const weekNo    = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+
             const mon = new Date(d.getTime());
             mon.setUTCDate(mon.getUTCDate() - 3);
             const sun = new Date(mon.getTime());
             sun.setUTCDate(sun.getUTCDate() + 6);
-            
-            const options = { day: 'numeric', month: 'short' };
+
+            const options  = { day: 'numeric', month: 'short' };
             const rangeStr = `${mon.toLocaleDateString('en-GB', options)} - ${sun.toLocaleDateString('en-GB', options)}`;
-            
+
             return {
-                key: `${d.getUTCFullYear()}-W${weekNo.toString().padStart(2, '0')}`,
-                label: `Week ${weekNo} (${rangeStr})`,
+                key:     `${d.getUTCFullYear()}-W${weekNo.toString().padStart(2, '0')}`,
+                label:   `Week ${weekNo} (${rangeStr})`,
                 sortVal: d.getTime()
             };
         }
@@ -646,33 +686,35 @@
 
             compiledInvoiceGroups = {};
 
-            globalFetchedJobs.forEach(event => {
+            globalFetchedJobs.forEach(function(event) {
                 const dateRaw = event.start.dateTime || event.start.date;
                 if (!dateRaw) return;
-                
-                const meta = getYearAndWeekString(new Date(dateRaw));
-                const ext = event.extendedProperties?.private || {};
-                const type = ext.jobType === 'Saltash' ? 'Saltash' : 'Freshbuild';
-                
-                const labour = parseFloat(ext.labourPrice || 0);
+
+                const meta  = getYearAndWeekString(new Date(dateRaw));
+                const ext   = (event.extendedProperties || {}).private || {};
+                const type  = ext.jobType === 'Saltash' ? 'Saltash' : 'Freshbuild';
+
+                const labour    = parseFloat(ext.labourPrice   || 0);
                 const materials = parseFloat(ext.materialPrice || 0);
 
                 if (!compiledInvoiceGroups[meta.key]) {
                     compiledInvoiceGroups[meta.key] = {
-                        title: meta.label,
-                        sortVal: meta.sortVal,
+                        title:      meta.label,
+                        sortVal:    meta.sortVal,
                         Freshbuild: { labour: 0, materials: 0, count: 0, jobs: [] },
-                        Saltash: { labour: 0, materials: 0, count: 0, jobs: [] }
+                        Saltash:    { labour: 0, materials: 0, count: 0, jobs: [] }
                     };
                 }
 
-                compiledInvoiceGroups[meta.key][type].labour += labour;
+                compiledInvoiceGroups[meta.key][type].labour    += labour;
                 compiledInvoiceGroups[meta.key][type].materials += materials;
-                compiledInvoiceGroups[meta.key][type].count += 1;
+                compiledInvoiceGroups[meta.key][type].count     += 1;
                 compiledInvoiceGroups[meta.key][type].jobs.push(event);
             });
 
-            const sortedKeys = Object.keys(compiledInvoiceGroups).sort((a,b) => compiledInvoiceGroups[b].sortVal - compiledInvoiceGroups[a].sortVal);
+            const sortedKeys = Object.keys(compiledInvoiceGroups).sort(function(a, b) {
+                return compiledInvoiceGroups[b].sortVal - compiledInvoiceGroups[a].sortVal;
+            });
 
             let tableHtml = `
                 <table class="invoice-table">
@@ -689,22 +731,24 @@
                     <tbody>
             `;
 
-            sortedKeys.forEach(weekKey => {
-                const weekData = compiledInvoiceGroups[weekKey];
+            sortedKeys.forEach(function(weekKey) {
+                const weekData       = compiledInvoiceGroups[weekKey];
                 const showFreshbuild = weekData.Freshbuild.count > 0;
-                const showSaltash = weekData.Saltash.count > 0;
-                const totalRowsForWeek = (showFreshbuild ? 1 : 0) + (showSaltash ? 1 : 0);
+                const showSaltash    = weekData.Saltash.count    > 0;
+                const totalRows      = (showFreshbuild ? 1 : 0) + (showSaltash ? 1 : 0);
 
-                if (totalRowsForWeek === 0) return;
+                if (totalRows === 0) return;
 
                 let isFirstRow = true;
+                // Escape weekKey for safe inline onclick
+                const safeKey = weekKey.replace(/'/g, "\\'");
 
                 if (showFreshbuild) {
-                    const fb = weekData.Freshbuild;
+                    const fb         = weekData.Freshbuild;
                     const combinedFB = fb.labour + fb.materials;
                     tableHtml += `
-                        <tr onclick="openExportModal('${weekKey}')">
-                            ${isFirstRow ? `<td rowspan="${totalRowsForWeek}"><strong>💼 ${weekData.title}</strong></td>` : ''}
+                        <tr onclick="openExportModal('${safeKey}')">
+                            ${isFirstRow ? `<td rowspan="${totalRows}"><strong>💼 ${weekData.title}</strong></td>` : ''}
                             <td><span class="type-badge badge-freshbuild">Freshbuild</span></td>
                             <td>${fb.count} job(s)</td>
                             <td>£${fb.labour.toFixed(2)}</td>
@@ -716,11 +760,11 @@
                 }
 
                 if (showSaltash) {
-                    const sa = weekData.Saltash;
+                    const sa         = weekData.Saltash;
                     const combinedSA = sa.labour + sa.materials;
                     tableHtml += `
-                        <tr onclick="openExportModal('${weekKey}')">
-                            ${isFirstRow ? `<td rowspan="${totalRowsForWeek}"><strong>💼 ${weekData.title}</strong></td>` : ''}
+                        <tr onclick="openExportModal('${safeKey}')">
+                            ${isFirstRow ? `<td rowspan="${totalRows}"><strong>💼 ${weekData.title}</strong></td>` : ''}
                             <td><span class="type-badge badge-saltash">Saltash</span></td>
                             <td>${sa.count} job(s)</td>
                             <td>£${sa.labour.toFixed(2)}</td>
@@ -728,44 +772,39 @@
                             <td><strong>£${combinedSA.toFixed(2)}</strong></td>
                         </tr>
                     `;
-                    isFirstRow = false;
                 }
             });
 
-            tableHtml += `
-                    </tbody>
-                </table>
-            `;
-
+            tableHtml += '</tbody></table>';
             wrapper.innerHTML = tableHtml;
         }
 
+        // ─── EXPORT MODAL ─────────────────────────────────────────────────────────────
         function openExportModal(weekKey) {
             const group = compiledInvoiceGroups[weekKey];
             if (!group) return;
 
-            document.getElementById('modal_week_key').value = weekKey;
+            document.getElementById('modal_week_key').value    = weekKey;
             document.getElementById('modal_week_title').innerText = group.title;
 
             if (group.Freshbuild.count > 0) {
                 const totalFB = group.Freshbuild.labour + group.Freshbuild.materials;
-                document.getElementById('modal_fb_totals').innerText = `£${totalFB.toFixed(2)}`;
-                document.getElementById('modal_fb_box').style.display = 'block';
+                document.getElementById('modal_fb_totals').innerText   = `£${totalFB.toFixed(2)}`;
+                document.getElementById('modal_fb_box').style.display  = 'block';
             } else {
-                document.getElementById('modal_fb_box').style.display = 'none';
+                document.getElementById('modal_fb_box').style.display  = 'none';
             }
 
             if (group.Saltash.count > 0) {
                 const totalSA = group.Saltash.labour + group.Saltash.materials;
-                document.getElementById('modal_sa_totals').innerText = `£${totalSA.toFixed(2)}`;
-                document.getElementById('modal_sa_box').style.display = 'block';
+                document.getElementById('modal_sa_totals').innerText   = `£${totalSA.toFixed(2)}`;
+                document.getElementById('modal_sa_box').style.display  = 'block';
             } else {
-                document.getElementById('modal_sa_box').style.display = 'none';
+                document.getElementById('modal_sa_box').style.display  = 'none';
             }
 
             document.getElementById('invoice_num_fb').value = '';
             document.getElementById('invoice_num_sa').value = '';
-
             document.getElementById('export_modal').style.display = 'flex';
         }
 
@@ -773,16 +812,17 @@
             document.getElementById('export_modal').style.display = 'none';
         }
 
+        // ─── DOCX EXPORT ─────────────────────────────────────────────────────────────
         function triggerDocxExport() {
             const weekKey = document.getElementById('modal_week_key').value;
-            const group = compiledInvoiceGroups[weekKey];
+            const group   = compiledInvoiceGroups[weekKey];
             if (!group) return;
 
             const invFB = document.getElementById('invoice_num_fb').value.trim() || 'NOT_ASSIGNED';
             const invSA = document.getElementById('invoice_num_sa').value.trim() || 'NOT_ASSIGNED';
 
             if (!window.docx || !window.docx.Document) {
-                alert("The Word document generation layout asset is currently unavailable or working in offline-fallback mode.");
+                alert('The Word document generation library is unavailable. Please check your internet connection and reload the page.');
                 return;
             }
 
@@ -790,84 +830,68 @@
             const contentSections = [];
 
             contentSections.push(
-                new Paragraph({
-                    text: "WEEKLY INVOICE STATEMENT",
-                    heading: HeadingLevel.HEADING_1,
-                    alignment: AlignmentType.CENTER
-                }),
-                new Paragraph({
-                    text: `Billing Period: ${group.title}`,
-                    alignment: AlignmentType.CENTER
-                }),
-                new Paragraph({ text: "" }) 
+                new Paragraph({ text: 'WEEKLY INVOICE STATEMENT', heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER }),
+                new Paragraph({ text: `Billing Period: ${group.title}`, alignment: AlignmentType.CENTER }),
+                new Paragraph({ text: '' })
             );
 
-            const compileSection = (typeLabel, subGroup, invoiceNum) => {
+            function compileSection(typeLabel, subGroup, invoiceNum) {
                 if (subGroup.count === 0) return;
 
                 contentSections.push(
                     new Paragraph({ text: `Job Allocation Group: ${typeLabel}`, heading: HeadingLevel.HEADING_2 }),
                     new Paragraph({ text: `Assigned Invoice Reference: ${invoiceNum}` }),
-                    new Paragraph({ text: "" })
+                    new Paragraph({ text: '' })
                 );
 
                 const tableRows = [
                     new TableRow({
                         children: [
-                            new TableCell({ width: { size: 40, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: "Job Address/Details", bold: true })] }),
-                            new TableCell({ width: { size: 20, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: "Labour (£)", bold: true })] }),
-                            new TableCell({ width: { size: 20, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: "Materials (£)", bold: true })] }),
-                            new TableCell({ width: { size: 20, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: "Total (£)", bold: true })] })
+                            new TableCell({ width: { size: 40, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: 'Job Address/Details', bold: true })] }),
+                            new TableCell({ width: { size: 20, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: 'Labour (£)',           bold: true })] }),
+                            new TableCell({ width: { size: 20, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: 'Materials (£)',         bold: true })] }),
+                            new TableCell({ width: { size: 20, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: 'Total (£)',             bold: true })] })
                         ]
                     })
                 ];
 
-                subGroup.jobs.forEach(job => {
-                    const ext = job.extendedProperties?.private || {};
-                    const lVal = parseFloat(ext.labourPrice || 0);
+                subGroup.jobs.forEach(function(job) {
+                    const ext  = (job.extendedProperties || {}).private || {};
+                    const lVal = parseFloat(ext.labourPrice   || 0);
                     const mVal = parseFloat(ext.materialPrice || 0);
-                    tableRows.push(
-                        new TableRow({
-                            children: [
-                                new TableCell({ children: [new Paragraph(job.summary || "No Address")] }),
-                                new TableCell({ children: [new Paragraph(`£${lVal.toFixed(2)}`)] }),
-                                new TableCell({ children: [new Paragraph(`£${mVal.toFixed(2)}`)] }),
-                                new TableCell({ children: [new Paragraph(`£${(lVal + mVal).toFixed(2)}`)] })
-                            ]
-                        })
-                    );
+                    tableRows.push(new TableRow({
+                        children: [
+                            new TableCell({ children: [new Paragraph(job.summary || 'No Address')] }),
+                            new TableCell({ children: [new Paragraph(`£${lVal.toFixed(2)}`)] }),
+                            new TableCell({ children: [new Paragraph(`£${mVal.toFixed(2)}`)] }),
+                            new TableCell({ children: [new Paragraph(`£${(lVal + mVal).toFixed(2)}`)] })
+                        ]
+                    }));
                 });
 
                 const grand = subGroup.labour + subGroup.materials;
-                tableRows.push(
-                    new TableRow({
-                        children: [
-                            new TableCell({ children: [new Paragraph({ text: "SUBTOTALS:", bold: true })] }),
-                            new TableCell({ children: [new Paragraph({ text: `£${subGroup.labour.toFixed(2)}`, bold: true })] }),
-                            new TableCell({ children: [new Paragraph({ text: `£${subGroup.materials.toFixed(2)}`, bold: true })] }),
-                            new TableCell({ children: [new Paragraph({ text: `£${grand.toFixed(2)}`, bold: true })] })
-                        ]
-                    })
-                ];
+                tableRows.push(new TableRow({
+                    children: [
+                        new TableCell({ children: [new Paragraph({ text: 'SUBTOTALS:', bold: true })] }),
+                        new TableCell({ children: [new Paragraph({ text: `£${subGroup.labour.toFixed(2)}`,    bold: true })] }),
+                        new TableCell({ children: [new Paragraph({ text: `£${subGroup.materials.toFixed(2)}`, bold: true })] }),
+                        new TableCell({ children: [new Paragraph({ text: `£${grand.toFixed(2)}`,              bold: true })] })
+                    ]
+                }));
 
                 contentSections.push(new Table({ rows: tableRows, width: { size: 100, type: WidthType.PERCENTAGE } }));
-                contentSections.push(new Paragraph({ text: "" }));
-            };
+                contentSections.push(new Paragraph({ text: '' }));
+            }
 
-            compileSection("Freshbuild", group.Freshbuild, invFB);
-            compileSection("Saltash", group.Saltash, invSA);
+            compileSection('Freshbuild', group.Freshbuild, invFB);
+            compileSection('Saltash',    group.Saltash,    invSA);
 
-            const doc = new Document({
-                sections: [{
-                    properties: {},
-                    children: contentSections
-                }]
-            });
+            const doc = new Document({ sections: [{ properties: {}, children: contentSections }] });
 
-            window.docx.Packer.toBlob(doc).then(blob => {
+            window.docx.Packer.toBlob(doc).then(function(blob) {
                 const url = window.URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
+                const a   = document.createElement('a');
+                a.href     = url;
                 a.download = `Invoice_Statement_${weekKey}.docx`;
                 document.body.appendChild(a);
                 a.click();
@@ -876,106 +900,101 @@
             });
         }
 
+        // ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
         function triggerExcelExport() {
             const weekKey = document.getElementById('modal_week_key').value;
-            const group = compiledInvoiceGroups[weekKey];
+            const group   = compiledInvoiceGroups[weekKey];
             if (!group) return;
 
             const invFB = document.getElementById('invoice_num_fb').value.trim() || 'NOT_ASSIGNED';
             const invSA = document.getElementById('invoice_num_sa').value.trim() || 'NOT_ASSIGNED';
 
             const sheetData = [
-                ["Weekly Invoice Statement"],
-                ["Period:", group.title],
+                ['Weekly Invoice Statement'],
+                ['Period:', group.title],
                 [],
-                ["Job Address", "Type", "Invoice Number", "Labour Price (£)", "Material Price (£)", "Total Combined (£)"]
+                ['Job Address', 'Type', 'Invoice Number', 'Labour Price (£)', 'Material Price (£)', 'Total Combined (£)']
             ];
 
-            const loadRows = (subGroup, typeName, invNum) => {
+            function loadRows(subGroup, typeName, invNum) {
                 if (subGroup.count === 0) return;
-                subGroup.jobs.forEach(j => {
-                    const ext = j.extendedProperties?.private || {};
-                    const l = parseFloat(ext.labourPrice || 0);
-                    const m = parseFloat(ext.materialPrice || 0);
-                    sheetData.push([j.summary || "No Address", typeName, invNum, l, m, (l + m)]);
+                subGroup.jobs.forEach(function(j) {
+                    const ext = (j.extendedProperties || {}).private || {};
+                    const l   = parseFloat(ext.labourPrice   || 0);
+                    const m   = parseFloat(ext.materialPrice || 0);
+                    sheetData.push([j.summary || 'No Address', typeName, invNum, l, m, (l + m)]);
                 });
                 const tot = subGroup.labour + subGroup.materials;
-                sheetData.push([`Total ${typeName} Subtotal`, "", "", subGroup.labour, subGroup.materials, tot], []);
-            };
+                sheetData.push([`Total ${typeName} Subtotal`, '', '', subGroup.labour, subGroup.materials, tot], []);
+            }
 
-            loadRows(group.Freshbuild, "Freshbuild", invFB);
-            loadRows(group.Saltash, "Saltash", invSA);
+            loadRows(group.Freshbuild, 'Freshbuild', invFB);
+            loadRows(group.Saltash,    'Saltash',    invSA);
 
             const wb = XLSX.utils.book_new();
             const ws = XLSX.utils.aoa_to_sheet(sheetData);
-            XLSX.utils.book_append_sheet(wb, ws, "Weekly Summary");
+            XLSX.utils.book_append_sheet(wb, ws, 'Weekly Summary');
             XLSX.writeFile(wb, `Invoice_Spreadsheet_${weekKey}.xlsx`);
         }
 
+        // ─── FORM POPULATION ─────────────────────────────────────────────────────────
         function populateFormFromCache(event) {
             if (!event) return;
-            const extended = event.extendedProperties?.private || {};
+            const extended = (event.extendedProperties || {}).private || {};
 
-            document.getElementById('edit_event_id').value = event.id;
-            document.getElementById('edit_event_time').value = event.start.dateTime || event.start.date;
-
-            document.getElementById('job_location').value = event.summary || '';
-            document.getElementById('job_type').value = extended.jobType === 'Saltash' ? 'Commercial' : 'Domestic';
-            document.getElementById('job_price_labour').value = extended.labourPrice || '';
-            document.getElementById('job_price_materials').value = extended.materialPrice || '';
-            document.getElementById('job_notes').value = event.description || '';
+            document.getElementById('edit_event_id').value        = event.id;
+            document.getElementById('edit_event_time').value      = event.start.dateTime || event.start.date;
+            document.getElementById('job_location').value         = event.summary || '';
+            document.getElementById('job_type').value             = extended.jobType === 'Saltash' ? 'Commercial' : 'Domestic';
+            document.getElementById('job_price_labour').value     = extended.labourPrice   || '';
+            document.getElementById('job_price_materials').value  = extended.materialPrice || '';
+            document.getElementById('job_notes').value            = event.description || '';
 
             if (event.start.dateTime || event.start.date) {
                 const existingDate = new Date(event.start.dateTime || event.start.date);
                 document.getElementById('job_date').value = existingDate.toISOString().split('T')[0];
             }
 
-            document.getElementById('form_title').innerText = "Modify Existing Job";
-            document.getElementById('submit_btn').innerText = "Update Job Details";
-            document.getElementById('submit_btn').style.backgroundColor = '#eab308';
-            document.getElementById('cancel_edit_btn').style.display = 'block';
-            
+            document.getElementById('form_title').innerText              = 'Modify Existing Job';
+            document.getElementById('submit_btn').innerText               = 'Update Job Details';
+            document.getElementById('submit_btn').style.backgroundColor   = '#eab308';
+            document.getElementById('cancel_edit_btn').style.display      = 'block';
             document.getElementById('job_form').scrollIntoView({ behavior: 'smooth' });
         }
 
         function exitEditMode() {
-            document.getElementById('edit_event_id').value = '';
-            document.getElementById('edit_event_time').value = '';
-            
-            document.getElementById('job_location').value = '';
-            document.getElementById('job_price_labour').value = '';
-            document.getElementById('job_price_materials').value = '';
-            document.getElementById('job_date').value = '';
-            document.getElementById('job_notes').value = '';
-
-            document.getElementById('form_title').innerText = "Add New Job";
-            document.getElementById('submit_btn').innerText = "Add Job to Calendar";
-            document.getElementById('submit_btn').style.backgroundColor = '#0284c7';
-            document.getElementById('cancel_edit_btn').style.display = 'none';
+            ['edit_event_id', 'edit_event_time', 'job_location',
+             'job_price_labour', 'job_price_materials', 'job_date', 'job_notes'].forEach(function(id) {
+                document.getElementById(id).value = '';
+            });
+            document.getElementById('form_title').innerText               = 'Add New Job';
+            document.getElementById('submit_btn').innerText               = 'Add Job to Calendar';
+            document.getElementById('submit_btn').style.backgroundColor   = '#0284c7';
+            document.getElementById('cancel_edit_btn').style.display      = 'none';
         }
 
+        // ─── JOB SUBMIT ──────────────────────────────────────────────────────────────
         function submitJobToCalendar(e) {
             e.preventDefault();
             const submitBtn = document.getElementById('submit_btn');
             const statusMsg = document.getElementById('status_msg');
-            
-            submitBtn.disabled = true;
-            statusMsg.style.display = 'none';
 
-            const editId = document.getElementById('edit_event_id').value;
-            const originalTime = document.getElementById('edit_event_time').value;
+            submitBtn.disabled         = true;
+            statusMsg.style.display    = 'none';
 
-            const type = document.getElementById('job_type').value;
-            const labour = document.getElementById('job_price_labour').value;
-            const materials = document.getElementById('job_price_materials').value;
-            const location = document.getElementById('job_location').value;
-            const manualDateValue = document.getElementById('job_date').value;
-            const notes = document.getElementById('job_notes').value;
+            const editId        = document.getElementById('edit_event_id').value;
+            const originalTime  = document.getElementById('edit_event_time').value;
+            const type          = document.getElementById('job_type').value;
+            const labour        = document.getElementById('job_price_labour').value;
+            const materials     = document.getElementById('job_price_materials').value;
+            const location      = document.getElementById('job_location').value;
+            const manualDate    = document.getElementById('job_date').value;
+            const notes         = document.getElementById('job_notes').value;
 
             let startTime;
             if (editId) {
-                if (manualDateValue) {
-                    const parsedManual = new Date(manualDateValue);
+                if (manualDate) {
+                    const parsedManual   = new Date(manualDate);
                     const parsedOriginal = new Date(originalTime);
                     parsedOriginal.setFullYear(parsedManual.getFullYear(), parsedManual.getMonth(), parsedManual.getDate());
                     startTime = parsedOriginal.toISOString();
@@ -983,80 +1002,80 @@
                     startTime = originalTime;
                 }
             } else {
-                if (manualDateValue) {
-                    const targetDate = new Date(manualDateValue);
-                    const now = new Date();
+                if (manualDate) {
+                    const targetDate = new Date(manualDate);
+                    const now        = new Date();
                     targetDate.setHours(now.getHours(), now.getMinutes(), 0, 0);
                     startTime = targetDate.toISOString();
                 } else {
                     startTime = new Date().toISOString();
                 }
             }
-            
-            let endTime = new Date(new Date(startTime).getTime() + (60 * 60 * 1000)).toISOString();
+
+            const endTime       = new Date(new Date(startTime).getTime() + 3600000).toISOString();
             const combinedTotal = (parseFloat(labour) + parseFloat(materials)).toFixed(2);
 
             const eventPayload = {
-                'summary': location,
-                'location': location,
-                'description': notes,
-                'start': { 'dateTime': startTime, 'timeZone': 'Europe/London' },
-                'end': { 'dateTime': endTime, 'timeZone': 'Europe/London' },
-                'reminders': { 'useDefault': false, 'overrides': [] },
-                'extendedProperties': {
-                    'private': { 
-                        'jobType': type === 'Commercial' ? 'Saltash' : 'Freshbuild', 
-                        'price': combinedTotal,
-                        'labourPrice': labour,
-                        'materialPrice': materials
+                summary:     location,
+                location:    location,
+                description: notes,
+                start:       { dateTime: startTime, timeZone: 'Europe/London' },
+                end:         { dateTime: endTime,   timeZone: 'Europe/London' },
+                reminders:   { useDefault: false, overrides: [] },
+                extendedProperties: {
+                    private: {
+                        jobType:       type === 'Commercial' ? 'Saltash' : 'Freshbuild',
+                        price:         combinedTotal,
+                        labourPrice:   labour,
+                        materialPrice: materials
                     }
                 }
             };
 
-            let apiCall;
-            if (editId) {
-                apiCall = gapi.client.calendar.events.update({
-                    'calendarId': TARGET_JOBS_CAL_ID,
-                    'eventId': editId,
-                    'resource': eventPayload
-                });
-            } else {
-                apiCall = gapi.client.calendar.events.insert({
-                    'calendarId': TARGET_JOBS_CAL_ID,
-                    'resource': eventPayload
-                });
-            }
+            const apiCall = editId
+                ? gapi.client.calendar.events.update({ calendarId: TARGET_JOBS_CAL_ID, eventId: editId, resource: eventPayload })
+                : gapi.client.calendar.events.insert({ calendarId: TARGET_JOBS_CAL_ID, resource: eventPayload });
 
-            apiCall.then(response => {
-                statusMsg.className = 'success';
-                statusMsg.innerHTML = editId ? '<strong>Success!</strong> Job entries updated.' : '<strong>Success!</strong> Job written to calendar.';
+            apiCall.then(function() {
+                statusMsg.className    = 'success';
+                statusMsg.innerHTML    = editId
+                    ? '<strong>Success!</strong> Job entries updated.'
+                    : '<strong>Success!</strong> Job written to calendar.';
                 statusMsg.style.display = 'block';
-                
+
                 exitEditMode();
-                submitBtn.disabled = false; 
+                submitBtn.disabled = false;
                 loadRecentJobs();
-                
+
                 if (document.getElementById('search_query').value.trim()) {
                     searchCalendarJobs();
                 }
-
-                updateCalendarView(); 
-            }).catch(err => {
-                statusMsg.className = 'error';
-                statusMsg.innerHTML = '<strong>Error saving job:</strong> ' + (err.result?.error?.message || 'Check network connection');
+                updateCalendarView();
+            }).catch(function(err) {
+                console.error('submitJobToCalendar error:', err);
+                statusMsg.className    = 'error';
+                statusMsg.innerHTML    = '<strong>Error saving job:</strong> ' + ((err.result && err.result.error && err.result.error.message) || 'Check network connection');
                 statusMsg.style.display = 'block';
-                submitBtn.disabled = false;
-                
+                submitBtn.disabled     = false;
+
                 if (err.status === 401) {
                     localStorage.removeItem('google_cal_token');
                     document.getElementById('auth_section').style.display = 'block';
-                    document.getElementById('job_form').style.opacity = '0.3';
-                    document.getElementById('search_panel').style.opacity = '0.3';
-                    document.getElementById('recent_panel').style.opacity = '0.3';
-                    document.getElementById('invoice_panel').style.opacity = '0.3';
+                    ['job_form', 'search_panel', 'recent_panel', 'invoice_panel'].forEach(function(id) {
+                        document.getElementById(id).style.opacity = '0.3';
+                    });
                 }
             });
         }
+
+        // ─── INIT ─────────────────────────────────────────────────────────────────────
+        document.addEventListener('DOMContentLoaded', updateCalendarView);
     </script>
+
+    <!-- FIX 8: Google scripts load AFTER our code so the onload callbacks (gapiLoaded / gisLoaded)
+         are guaranteed to exist on window before they're invoked -->
+    <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+    <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+
 </body>
 </html>
