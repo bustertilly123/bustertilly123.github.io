@@ -134,10 +134,49 @@
         .invoice-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
         .invoice-table th, .invoice-table td { padding: 10px; border: 1px solid #333; }
         .invoice-table th { background-color: #252525; color: #fff; }
+        .invoice-table tbody tr { cursor: pointer; transition: background-color 0.2s ease; }
+        .invoice-table tbody tr:hover { background-color: #2a2a2a !important; }
         .invoice-table tr:nth-child(even) { background-color: #181818; }
         .type-badge { padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 12px; }
         .badge-freshbuild { background-color: #1e3a8a; color: #93c5fd; }
         .badge-saltash { background-color: #78350f; color: #fef08a; }
+
+        /* Modal Overlay Interface styling */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.75);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        }
+        .modal-content {
+            background-color: #1e1e1e;
+            border: 1px solid #444;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 500px;
+            padding: 20px;
+            box-sizing: border-box;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+        .export-row-box {
+            background-color: #252525;
+            padding: 12px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border: 1px solid #333;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .btn-modal-action {
+            padding: 10px;
+            font-size: 14px;
+        }
 
         @media (max-width: 900px) {
             .main-panels { flex-direction: column; }
@@ -242,7 +281,7 @@
         <div class="panel-box invoice-box" id="invoice_panel" style="opacity: 0.3; pointer-events: none;">
             <h2>Weekly Invoice Summary Engine</h2>
             <p style="margin: 0 0 15px 0; color: #aaa; font-size: 14px;">
-                Groups retrieved history data into billing rows. Add, modify or run search queries above to populate calculations.
+                Groups retrieved history data into billing rows. <strong>Click any week row below</strong> to assign invoice numbers and trigger exports.
             </p>
             <div class="invoice-table-wrapper" id="invoice_view_container">
                 <div style="color: #aaa; padding: 10px;">Awaiting background core script synchronization...</div>
@@ -250,6 +289,46 @@
         </div>
 
     </div>
+
+    <div class="modal-overlay" id="export_modal">
+        <div class="modal-content">
+            <h2 id="modal_week_title" style="border-bottom: 1px solid #444; padding-bottom: 5px;">Export Weekly Billing</h2>
+            <p style="font-size:13px; color:#aaa; margin-top:-5px; margin-bottom:15px;">Configure numbers to print invoices or build timesheets.</p>
+            
+            <input type="hidden" id="modal_week_key" value="">
+
+            <div id="modal_fb_box" class="export-row-box" style="display:none;">
+                <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                    <span class="type-badge badge-freshbuild">Freshbuild Breakdown</span>
+                    <span id="modal_fb_totals" style="font-weight:bold; color:#34d399;">£0.00</span>
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label style="font-size:12px; color:#aaa;">Invoice Number</label>
+                    <input type="text" id="invoice_num_fb" placeholder="e.g. FB-2026-001">
+                </div>
+            </div>
+
+            <div id="modal_sa_box" class="export-row-box" style="display:none;">
+                <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                    <span class="type-badge badge-saltash">Saltash Breakdown</span>
+                    <span id="modal_sa_totals" style="font-weight:bold; color:#34d399;">£0.00</span>
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label style="font-size:12px; color:#aaa;">Invoice Number</label>
+                    <input type="text" id="invoice_num_sa" placeholder="e.g. SA-2026-001">
+                </div>
+            </div>
+
+            <div class="modal-actions">
+                <button type="button" class="btn btn-modal-action" style="background-color:#1e3a8a;" onclick="triggerDocxExport()">Word Document (.docx)</button>
+                <button type="button" class="btn btn-modal-action" style="background-color:#166534;" onclick="triggerExcelExport()">Excel Sheet (.xlsx)</button>
+            </div>
+            <button type="button" class="btn btn-cancel" onclick="closeExportModal()">Close Menu</button>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
     <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
     <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
@@ -271,6 +350,7 @@
         let searchCache = []; 
         let recentCache = []; 
         let globalFetchedJobs = []; 
+        let compiledInvoiceGroups = {}; // Stores raw mapping details for modal indexing
 
         function updateCalendarView() {
             const iframe = document.getElementById('calendar_frame');
@@ -403,7 +483,10 @@
                     card.className = 'job-card';
                     card.style.borderLeft = '3px solid #eab308';
                     card.style.cursor = 'pointer';
-                    card.onclick = () => populateFormFromCache(recentCache[index]);
+                    card.onclick = (e) => {
+                        e.stopPropagation();
+                        populateFormFromCache(recentCache[index]);
+                    };
                     
                     card.innerHTML = `
                         <div class="job-card-header" style="font-size:14px;">
@@ -541,7 +624,8 @@
                 return;
             }
 
-            const groups = {};
+            // Clear cache container for updates
+            compiledInvoiceGroups = {};
 
             globalFetchedJobs.forEach(event => {
                 const dateRaw = event.start.dateTime || event.start.date;
@@ -554,27 +638,28 @@
                 const labour = parseFloat(ext.labourPrice || 0);
                 const materials = parseFloat(ext.materialPrice || 0);
 
-                if (!groups[meta.key]) {
-                    groups[meta.key] = {
+                if (!compiledInvoiceGroups[meta.key]) {
+                    compiledInvoiceGroups[meta.key] = {
                         title: meta.label,
                         sortVal: meta.sortVal,
-                        Freshbuild: { labour: 0, materials: 0, count: 0 },
-                        Saltash: { labour: 0, materials: 0, count: 0 }
+                        Freshbuild: { labour: 0, materials: 0, count: 0, jobs: [] },
+                        Saltash: { labour: 0, materials: 0, count: 0, jobs: [] }
                     };
                 }
 
-                groups[meta.key][type].labour += labour;
-                groups[meta.key][type].materials += materials;
-                groups[meta.key][type].count += 1;
+                compiledInvoiceGroups[meta.key][type].labour += labour;
+                compiledInvoiceGroups[meta.key][type].materials += materials;
+                compiledInvoiceGroups[meta.key][type].count += 1;
+                compiledInvoiceGroups[meta.key][type].jobs.push(event);
             });
 
-            const sortedKeys = Object.keys(groups).sort((a,b) => groups[b].sortVal - groups[a].sortVal);
+            const sortedKeys = Object.keys(compiledInvoiceGroups).sort((a,b) => compiledInvoiceGroups[b].sortVal - compiledInvoiceGroups[a].sortVal);
 
             let tableHtml = `
                 <table class="invoice-table">
                     <thead>
                         <tr>
-                            <th>Billing Period</th>
+                            <th>Billing Period (Click to Export)</th>
                             <th>Job Type</th>
                             <th>Job Count</th>
                             <th>Labour Subtotal</th>
@@ -586,7 +671,7 @@
             `;
 
             sortedKeys.forEach(weekKey => {
-                const weekData = groups[weekKey];
+                const weekData = compiledInvoiceGroups[weekKey];
                 const showFreshbuild = weekData.Freshbuild.count > 0;
                 const showSaltash = weekData.Saltash.count > 0;
                 const totalRowsForWeek = (showFreshbuild ? 1 : 0) + (showSaltash ? 1 : 0);
@@ -599,8 +684,8 @@
                     const fb = weekData.Freshbuild;
                     const combinedFB = fb.labour + fb.materials;
                     tableHtml += `
-                        <tr>
-                            ${isFirstRow ? `<td rowspan="${totalRowsForWeek}"><strong>${weekData.title}</strong></td>` : ''}
+                        <tr onclick="openExportModal('${weekKey}')">
+                            ${isFirstRow ? `<td rowspan="${totalRowsForWeek}"><strong>💼 ${weekData.title}</strong></td>` : ''}
                             <td><span class="type-badge badge-freshbuild">Freshbuild</span></td>
                             <td>${fb.count} job(s)</td>
                             <td>£${fb.labour.toFixed(2)}</td>
@@ -615,8 +700,8 @@
                     const sa = weekData.Saltash;
                     const combinedSA = sa.labour + sa.materials;
                     tableHtml += `
-                        <tr>
-                            ${isFirstRow ? `<td rowspan="${totalRowsForWeek}"><strong>${weekData.title}</strong></td>` : ''}
+                        <tr onclick="openExportModal('${weekKey}')">
+                            ${isFirstRow ? `<td rowspan="${totalRowsForWeek}"><strong>💼 ${weekData.title}</strong></td>` : ''}
                             <td><span class="type-badge badge-saltash">Saltash</span></td>
                             <td>${sa.count} job(s)</td>
                             <td>£${sa.labour.toFixed(2)}</td>
@@ -636,6 +721,183 @@
             wrapper.innerHTML = tableHtml;
         }
 
+        // Operational controls for the modal overlay
+        function openExportModal(weekKey) {
+            const group = compiledInvoiceGroups[weekKey];
+            if (!group) return;
+
+            document.getElementById('modal_week_key').value = weekKey;
+            document.getElementById('modal_week_title').innerText = group.title;
+
+            // Handle Freshbuild visibility
+            if (group.Freshbuild.count > 0) {
+                const totalFB = group.Freshbuild.labour + group.Freshbuild.materials;
+                document.getElementById('modal_fb_totals').innerText = `£${totalFB.toFixed(2)}`;
+                document.getElementById('modal_fb_box').style.display = 'block';
+            } else {
+                document.getElementById('modal_fb_box').style.display = 'none';
+            }
+
+            // Handle Saltash visibility
+            if (group.Saltash.count > 0) {
+                const totalSA = group.Saltash.labour + group.Saltash.materials;
+                document.getElementById('modal_sa_totals').innerText = `£${totalSA.toFixed(2)}`;
+                document.getElementById('modal_sa_box').style.display = 'block';
+            } else {
+                document.getElementById('modal_sa_box').style.display = 'none';
+            }
+
+            // Autofill or reset input fields
+            document.getElementById('invoice_num_fb').value = '';
+            document.getElementById('invoice_num_sa').value = '';
+
+            document.getElementById('export_modal').style.display = 'flex';
+        }
+
+        function closeExportModal() {
+            document.getElementById('export_modal').style.display = 'none';
+        }
+
+        // Document Export Engines: Word Document Generator Engine (.docx)
+        function triggerDocxExport() {
+            const weekKey = document.getElementById('modal_week_key').value;
+            const group = compiledInvoiceGroups[weekKey];
+            if (!group) return;
+
+            const invFB = document.getElementById('invoice_num_fb').value.trim() || 'NOT_ASSIGNED';
+            const invSA = document.getElementById('invoice_num_sa').value.trim() || 'NOT_ASSIGNED';
+
+            const { Document, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, HeadingLevel, AlignmentType } = docx;
+
+            const contentSections = [];
+
+            // Add Header Block
+            contentSections.push(
+                new Paragraph({
+                    text: "WEEKLY INVOICE STATEMENT",
+                    heading: HeadingLevel.HEADING_1,
+                    alignment: AlignmentType.CENTER
+                }),
+                new Paragraph({
+                    text: `Billing Period: ${group.title}`,
+                    alignment: AlignmentType.CENTER
+                }),
+                new Paragraph({ text: "" }) 
+            );
+
+            const compileSection = (typeLabel, subGroup, invoiceNum) => {
+                if (subGroup.count === 0) return;
+
+                contentSections.push(
+                    new Paragraph({ text: `Job Allocation Group: ${typeLabel}`, heading: HeadingLevel.HEADING_2 }),
+                    new Paragraph({ text: `Assigned Invoice Reference: ${invoiceNum}` }),
+                    new Paragraph({ text: "" })
+                );
+
+                const tableRows = [
+                    new TableRow({
+                        children: [
+                            new TableCell({ width: { size: 40, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: "Job Address/Details", bold: true })] }),
+                            new TableCell({ width: { size: 20, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: "Labour (£)", bold: true })] }),
+                            new TableCell({ width: { size: 20, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: "Materials (£)", bold: true })] }),
+                            new TableCell({ width: { size: 20, type: WidthType.PERCENTAGE }, children: [new Paragraph({ text: "Total (£)", bold: true })] })
+                        ]
+                    })
+                ];
+
+                subGroup.jobs.forEach(job => {
+                    const ext = job.extendedProperties?.private || {};
+                    const lVal = parseFloat(ext.labourPrice || 0);
+                    const mVal = parseFloat(ext.materialPrice || 0);
+                    tableRows.push(
+                        new TableRow({
+                            children: [
+                                new TableCell({ children: [new Paragraph(job.summary || "No Address")] }),
+                                new TableCell({ children: [new Paragraph(`£${lVal.toFixed(2)}`)] }),
+                                new TableCell({ children: [new Paragraph(`£${mVal.toFixed(2)}`)] }),
+                                new TableCell({ children: [new Paragraph(`£${(lVal + mVal).toFixed(2)}`)] })
+                            ]
+                        })
+                    );
+                });
+
+                // Summary Row Block
+                const grand = subGroup.labour + subGroup.materials;
+                tableRows.push(
+                    new TableRow({
+                        children: [
+                            new TableCell({ children: [new Paragraph({ text: "SUBTOTALS:", bold: true })] }),
+                            new TableCell({ children: [new Paragraph({ text: `£${subGroup.labour.toFixed(2)}`, bold: true })] }),
+                            new TableCell({ children: [new Paragraph({ text: `£${subGroup.materials.toFixed(2)}`, bold: true })] }),
+                            new TableCell({ children: [new Paragraph({ text: `£${grand.toFixed(2)}`, bold: true })] })
+                        ]
+                    })
+                ];
+
+                contentSections.push(new Table({ rows: tableRows, width: { size: 100, type: WidthType.PERCENTAGE } }));
+                contentSections.push(new Paragraph({ text: "" }));
+            };
+
+            compileSection("Freshbuild", group.Freshbuild, invFB);
+            compileSection("Saltash", group.Saltash, invSA);
+
+            const doc = new Document({
+                sections: [{
+                    properties: {},
+                    children: contentSections
+                }]
+            });
+
+            docx.Packer.toBlob(doc).then(blob => {
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `Invoice_Statement_${weekKey}.docx`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+            });
+        }
+
+        // Document Export Engines: Excel Spreadsheets Builder Engine (.xlsx)
+        function triggerExcelExport() {
+            const weekKey = document.getElementById('modal_week_key').value;
+            const group = compiledInvoiceGroups[weekKey];
+            if (!group) return;
+
+            const invFB = document.getElementById('invoice_num_fb').value.trim() || 'NOT_ASSIGNED';
+            const invSA = document.getElementById('invoice_num_sa').value.trim() || 'NOT_ASSIGNED';
+
+            const sheetData = [
+                ["Weekly Invoice Statement"],
+                ["Period:", group.title],
+                [],
+                ["Job Address", "Type", "Invoice Number", "Labour Price (£)", "Material Price (£)", "Total Combined (£)"]
+            ];
+
+            const loadRows = (subGroup, typeName, invNum) => {
+                if (subGroup.count === 0) return;
+                subGroup.jobs.forEach(j => {
+                    const ext = j.extendedProperties?.private || {};
+                    const l = parseFloat(ext.labourPrice || 0);
+                    const m = parseFloat(ext.materialPrice || 0);
+                    sheetData.push([j.summary || "No Address", typeName, invNum, l, m, (l + m)]);
+                });
+                // Add subtotal row directly below
+                const tot = subGroup.labour + subGroup.materials;
+                sheetData.push([`Total ${typeName} Subtotal`, "", "", subGroup.labour, subGroup.materials, tot], []);
+            };
+
+            loadRows(group.Freshbuild, "Freshbuild", invFB);
+            loadRows(group.Saltash, "Saltash", invSA);
+
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.aoa_to_sheet(sheetData);
+            XLSX.utils.book_append_sheet(wb, ws, "Weekly Summary");
+            XLSX.writeFile(wb, `Invoice_Spreadsheet_${weekKey}.xlsx`);
+        }
+
         function populateFormFromCache(event) {
             if (!event) return;
             const extended = event.extendedProperties?.private || {};
@@ -649,7 +911,6 @@
             document.getElementById('job_price_materials').value = extended.materialPrice || '';
             document.getElementById('job_notes').value = event.description || '';
 
-            // Map date picker to existing event start date when editing
             if (event.start.dateTime || event.start.date) {
                 const existingDate = new Date(event.start.dateTime || event.start.date);
                 document.getElementById('job_date').value = existingDate.toISOString().split('T')[0];
@@ -697,23 +958,18 @@
             const manualDateValue = document.getElementById('job_date').value;
             const notes = document.getElementById('job_notes').value;
 
-            // Handle backdating vs editing vs today's date
             let startTime;
             if (editId) {
-                // If editing, see if they altered the date manually
                 if (manualDateValue) {
                     const parsedManual = new Date(manualDateValue);
                     const parsedOriginal = new Date(originalTime);
-                    // Retain original timestamps but inject modified date
                     parsedOriginal.setFullYear(parsedManual.getFullYear(), parsedManual.getMonth(), parsedManual.getDate());
                     startTime = parsedOriginal.toISOString();
                 } else {
                     startTime = originalTime;
                 }
             } else {
-                // For new items, check if a manual backdate is set
                 if (manualDateValue) {
-                    // Create date at current hour of that past date so it orders sensibly
                     const targetDate = new Date(manualDateValue);
                     const now = new Date();
                     targetDate.setHours(now.getHours(), now.getMinutes(), 0, 0);
