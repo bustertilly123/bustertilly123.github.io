@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Booker 1.0</title>
+    <title>Job Booker & Invoice Tracker</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
@@ -326,14 +326,31 @@
             <button type="button" class="btn btn-cancel" onclick="closeExportModal()">Close Menu</button>
         </div>
     </div>
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/docx/8.5.0/docx.js"></script>
+
+    <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
     <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
     <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
 
     <script>
+        // Emergency fallback initialization to bypass library blocks if CDNs act up
+        window.addEventListener('DOMContentLoaded', () => {
+            setTimeout(() => {
+                if (!window.docx) {
+                    console.warn("docx library failed to load via CDN. Initializing fallback objects to restore application flow.");
+                    window.docx = {
+                        Document: class {}, Paragraph: class {}, Table: class {}, 
+                        TableRow: class {}, TableCell: class {}, WidthType: {}, 
+                        HeadingLevel: {}, AlignmentType: {}, Packer: { toBlob: () => Promise.resolve(new Blob()) }
+                    };
+                    // Manually force checks to unstick UI if callbacks didn't fire cleanly
+                    if (typeof gapiLoaded === 'function' && !gapiInited) gapiLoaded();
+                    if (typeof gisLoaded === 'function' && !gisInited) gisLoaded();
+                }
+            }, 2500);
+        });
+
         const CLIENT_ID = '207281748804-ajuenjdl9s6surn2hgep5iuccccfls9d.apps.googleusercontent.com';
         const API_KEY = 'AIzaSyCIUMy-DB9QbvVc2YaVnwrzaq0e7trJGuc';
         
@@ -404,18 +421,20 @@
                 gapi.client.init({ apiKey: API_KEY, discoveryDocs: [DISCOVERY_DOC] }).then(() => {
                     gapiInited = true;
                     checkInitStatus();
-                });
+                }).catch(err => console.error("Error initializing GAPI client", err));
             });
         }
 
         function gisLoaded() {
-            tokenClient = google.accounts.oauth2.initTokenClient({
-                client_id: CLIENT_ID,
-                scope: SCOPES,
-                callback: '', 
-            });
-            gisInited = true;
-            checkInitStatus();
+            if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+                tokenClient = google.accounts.oauth2.initTokenClient({
+                    client_id: CLIENT_ID,
+                    scope: SCOPES,
+                    callback: '', 
+                });
+                gisInited = true;
+                checkInitStatus();
+            }
         }
         
         function checkInitStatus() {
@@ -754,7 +773,6 @@
             document.getElementById('export_modal').style.display = 'none';
         }
 
-        // Fixed syntax layout block inside the Word builder framework setup
         function triggerDocxExport() {
             const weekKey = document.getElementById('modal_week_key').value;
             const group = compiledInvoiceGroups[weekKey];
@@ -763,8 +781,12 @@
             const invFB = document.getElementById('invoice_num_fb').value.trim() || 'NOT_ASSIGNED';
             const invSA = document.getElementById('invoice_num_sa').value.trim() || 'NOT_ASSIGNED';
 
-            const { Document, Paragraph, Table, TableRow, TableCell, WidthType, HeadingLevel, AlignmentType } = window.docx;
+            if (!window.docx || !window.docx.Document) {
+                alert("The Word document generation layout asset is currently unavailable or working in offline-fallback mode.");
+                return;
+            }
 
+            const { Document, Paragraph, Table, TableRow, TableCell, WidthType, HeadingLevel, AlignmentType } = window.docx;
             const contentSections = [];
 
             contentSections.push(
