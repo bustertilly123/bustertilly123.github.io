@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Manager New</title>
+    <title>Job Manager (Google Calendar backend)</title>
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -89,8 +89,26 @@
                 scope: GOOGLE_SCOPES,
                 callback: () => {} // overridden per-request in ensureToken()
             });
-            setStatus("Not connected");
-            document.getElementById('connectBtn').style.display = 'inline-flex';
+            attemptSilentConnect();
+        }
+
+        /** Tries to reconnect using the browser's existing Google session, with no popup.
+         *  Falls back to showing the manual Connect button only if that's not possible
+         *  (e.g. first-ever visit, or access was revoked). */
+        async function attemptSilentConnect() {
+            setStatus("Checking existing Google session...");
+            try {
+                await ensureToken({ interactive: false });
+                document.getElementById('connectBtn').style.display = 'none';
+                document.getElementById('refreshBtn').style.display = 'inline-flex';
+                setStatus("Loading data...");
+                await loadAllData();
+                setStatus("Connected");
+            } catch (e) {
+                console.warn("Silent connect not available, manual connect required:", e);
+                setStatus("Not connected");
+                document.getElementById('connectBtn').style.display = 'inline-flex';
+            }
         }
 
         /** Resolves with a valid access token, requesting one (silently if possible) if needed. */
@@ -105,7 +123,12 @@
                     tokenExpiryMs = Date.now() + (resp.expires_in * 1000);
                     resolve(accessToken);
                 };
-                tokenClient.requestAccessToken({ prompt: interactive ? 'consent' : '' });
+                // Silent attempts (interactive: false) force no UI at all — they either succeed
+                // instantly or fail fast. Interactive attempts (user clicked Connect) omit the
+                // prompt override entirely, so Google only shows a screen when one is actually
+                // required (e.g. very first grant) rather than every single time.
+                const params = interactive ? {} : { prompt: '' };
+                tokenClient.requestAccessToken(params);
             });
         }
 
@@ -361,7 +384,7 @@
         }
 
         // ==========================================================
-        // SECTION 5: RENDERING (unchanged from Firebase version)
+        // SECTION 5: RENDERING
         // ==========================================================
         window.renderJobs = function () {
             const container  = document.getElementById('jobList');
