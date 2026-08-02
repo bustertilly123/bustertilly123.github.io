@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Migrate Jobs: Firebase → Google Calendar</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <style>
+        #log { font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; }
+    </style>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import {
+            getAuth, signInAnonymously, onAuthStateChanged, setPersistence, browserLocalPersistence
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import {
+            getFirestore, doc, getDoc, getDocs, collection, query
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ---- OLD FIREBASE PROJECT (read-only, unchanged from the original app) ----
+        const FIREBASE_CONFIG = {
+            apiKey:            "AIzaSyAX7GYX247S69b6blLBcja-_IHU6Y9i3hI",
+            authDomain:        "tools-9bf35.firebaseapp.com",
+            projectId:         "tools-9bf35",
+            storageBucket:     "tools-9bf35.firebasestorage.app",
+            messagingSenderId: "803649385600",
+            appId:             "1:803649385600:web:79fc8ed25d35ebdf032265"
+        };
+        const appId = FIREBASE_CONFIG.projectId;
+        const base  = () => `artifacts/${appId}/public/data`;
+
+        // ---- NEW GOOGLE CALENDAR BACKEND ----
+        // Use the SAME Client ID you pasted into job-manager-calendar.html.
+        // It's registered for your site's origin already, so it works here too.
+        const GOOGLE_CLIENT_ID = "653087131866-rso7vedf8f4m4d8uou1ab0tfqvue8toc.apps.googleusercontent.com";
+        const GOOGLE_SCOPES    = "https://www.googleapis.com/auth/calendar";
+        const CALENDAR_NAME    = "Job Manager"; // must match the main app exactly
+        const CALENDAR_ID_STORAGE_KEY = "jobManagerCalendarId";
+        const CAL_BASE = 'https://www.googleapis.com/calendar/v3';
+
+        let db, auth;
+        let fbJobs = [];
+        let fbInvoices = {};       // { week: {saltash, freshbuild} }
+        let fbConfig = null;       // { majorNumber, freshbuildMinor, saltashMinor }
+
+        let tokenClient = null, accessToken = null, tokenExpiryMs = 0;
+        let calendarId = null;
+
+        function log(msg) {
+            const el = document.getElementById('log');
+            el.textContent += msg + "\n";
+            el.scrollTop = el.scrollHeight;
+        }
+        function setFbStatus(t) { document.getElementById('fbStatus').textContent = t; }
+        function setGcStatus(t) { document.getElementById('gcStatus').textContent = t; }
+        function maybeEnableMigrate() {
+            const ready = fbJobs.length >= 0 && fbConfig !== undefined && accessToken;
+            document.getElementById('migrateBtn').disabled = !(db && accessToken);
+        }
+
+        // ---- FIREBASE (read-only) ----
+        async function initFirebaseRead() {
+            try {
+                const app = initializeApp(FIREBASE_CONFIG);
+                db   = getFirestore(app);
+                auth = getAuth(app);
+                await setPersistence(auth, browserLocalPersistence);
+                await signInAnonymously(auth);
+                onAuthStateChanged(auth, async (user) => {
+                    if (!user) return;
+                    setFbStatus("Connected — reading data...");
+                    await loadFirebaseData();
+                });
+            } catch (e) {
+                console.error(e);
+                setFbStatus("Connection error — see console");
+            }
+        }
+
+        async function loadFirebaseData() {
+            const [configSnap, jobsSnap, invoicesSnap] = await Promise.all([
+                getDoc(doc(db, `${base()}/invoice_config/current_numbers`)),
+                getDocs(query(collection(db, `${base()}/jobs`))),
+                getDocs(query(collection(db, `${base()}/invoices`)))
+            ]);
+
+            fbJobs = [];
+            jobsSnap.forEach(d => fbJobs.push({ id: d.id, ...d.data() }));
+
+            fbInvoices = {};
+            invoicesSnap.forEach(d => { fbInvoices[d.id] = d.data(); });
+
+            fbConfig = configSnap.exists() ? configSnap.data() : { majorNumber: 25, freshbuildMinor: 0, saltashMinor: 0 };
+
+            setFbStatus(`Found ${fbJobs.length} jobs, ${Object.keys(fbInvoices).length} invoice weeks, config loaded.`);
+            maybeEnableMigrate();
+        }
+
+        // ---- GOOGLE CALENDAR AUTH (mirrors the main app) ----
+        function initGis() {
+            if (!window.google || !window.google.accounts) { setTimeout(initGis, 200); return; }
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: GOOGLE_CLIENT_ID,
+                scope: GOOGLE_SCOPES,
+                callback: () => {}
+            });
+            document.getElementById('connectGcBtn').disabled = false;
+        }
+
+        function ensureToken({ interactive = false } = {}) {
+            if (accessToken && Date.now() < tokenExpiryMs - 60000) return Promise.resolve(accessToken);
+            return new Promise((resolve, reject) => {
+                tokenClient.callback = (resp) => {
+                    if (resp.error) { reject(new Error(resp.error)); return; }
+                    accessToken = resp.access_token;
+                    tokenExpiryMs = Date.now() + (resp.expires_in * 1000);
+                    resolve(accessToken);
+                };
+                tokenClient.requestAccessToken({ prompt: interactive ? 'consent' : '' });
+            });
+        }
+
+        window.connectGoogleCalendar = async function () {
+            try {
+                setGcStatus("Connecting...");
+                await ensureToken({ interactive: true });
+                calendarId = await getOrCreateCalendarId();
+                setGcStatus(`Connected — target calendar ready (${CALENDAR_NAME}).`);
+                maybeEnableMigrate();
+            } catch (e) {
+                console.error(e);
+                setGcStatus("Connection failed — try again");
+            }
+        };
+
+        async function apiFetch(url, options = {}) {
+            const token = await ensureToken();
+            const res = await fetch(url, {
+                ...options,
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(options.headers || {}) }
+            });
+            if (!res.ok) throw new Error(`Calendar API ${res.status}: ${await res.text()}`);
+            if (res.status === 204) return null;
+            return res.json();
+        }
+
+        async function getOrCreateCalendarId() {
+            const cached = localStorage.getItem(CALENDAR_ID_STORAGE_KEY);
+            if (cached) {
+                try { await apiFetch(`${CAL_BASE}/calendars/${encodeURIComponent(cached)}`); return cached; }
+                catch (e) { /* fall through to re-discover */ }
+            }
+            const list = await apiFetch(`${CAL_BASE}/users/me/calendarList?minAccessRole=owner`);
+            const existing = (list.items || []).find(c => c.summary === CALENDAR_NAME);
+            if (existing) { localStorage.setItem(CALENDAR_ID_STORAGE_KEY, existing.id); return existing.id; }
+            const created = await apiFetch(`${CAL_BASE}/calendars`, { method: 'POST', body: JSON.stringify({ summary: CALENDAR_NAME }) });
+            localStorage.setItem(CALENDAR_ID_STORAGE_KEY, created.id);
+            return created.id;
+        }
+
+        async function listAllEvents() {
+            let events = [], pageToken;
+            do {
+                const params = new URLSearchParams({
+                    maxResults: '2500', singleEvents: 'true', showDeleted: 'false',
+                    timeMin: '2000-01-01T00:00:00Z', timeMax: '2100-01-01T00:00:00Z'
+                });
+                if (pageToken) params.set('pageToken', pageToken);
+                const data = await apiFetch(`${CAL_BASE}/calendars/${encodeURIComponent(calendarId)}/events?${params}`);
+                events = events.concat(data.items || []);
+                pageToken = data.nextPageToken;
+            } while (pageToken);
+            return events;
+        }
+
+        function addDays(dateStr, n) {
+            const d = new Date(dateStr + 'T00:00:00');
+            d.setDate(d.getDate() + n);
+            return d.toISOString().split('T')[0];
+        }
+
+        // Same shape as the main app's jobToEventBody, plus a firestoreId tag for idempotency.
+        function jobToEventBody(job) {
+            const hasDate = !!job.dateCompleted;
+            const dateStr = hasDate ? job.dateCompleted : new Date().toISOString().split('T')[0];
+            return {
+                summary: job.address || job.title || '(no address)',
+                description: job.description || '',
+                start: { date: dateStr },
+                end:   { date: addDays(dateStr, 1) },
+                extendedProperties: {
+                    private: {
+                        appType: 'job',
+                        firestoreId: job.id,
+                        labourPrice: String(parseFloat(job.labourPrice) || 0),
+                        materialPrice: String(parseFloat(job.materialPrice) || 0),
+                        isHackney: String(!!job.isHackney),
+                        isPeabody: String(!!job.isPeabody),
+                        unscheduled: hasDate ? 'false' : 'true',
+                        timestamp: String(job.timestamp || Date.now())
+                    }
+                }
+            };
+        }
+
+        function invoiceEventBody(week, saltash, freshbuild) {
+            const priv = { appType: 'invoice', week };
+            if (saltash)    priv.saltash    = saltash;
+            if (freshbuild) priv.freshbuild = freshbuild;
+            return {
+                summary: `Invoice record — ${week}`,
+                start: { date: week }, end: { date: addDays(week, 1) },
+                extendedProperties: { private: priv }
+            };
+        }
+
+        function configEventBody(major, fbMinor, saMinor) {
+            return {
+                summary: 'Job Manager — invoice sequence config',
+                start: { date: '2020-01-01' }, end: { date: '2020-01-02' },
+                extendedProperties: {
+                    private: { appType: 'config', majorNumber: String(major), freshbuildMinor: String(fbMinor), saltashMinor: String(saMinor) }
+                }
+            };
+        }
+
+        // ---- MIGRATION ----
+        window.runMigration = async function () {
+            const btn = document.getElementById('migrateBtn');
+            btn.disabled = true;
+            log("Starting migration...");
+            try {
+                log("Checking what's already in the target calendar...");
+                const existingEvents = await listAllEvents();
+                const migratedFirestoreIds = new Set(
+                    existingEvents
+                        .map(ev => ev.extendedProperties && ev.extendedProperties.private && ev.extendedProperties.private.firestoreId)
+                        .filter(Boolean)
+                );
+                const existingInvoiceWeeks = new Set(
+                    existingEvents
+                        .filter(ev => ev.extendedProperties && ev.extendedProperties.private && ev.extendedProperties.private.appType === 'invoice')
+                        .map(ev => ev.extendedProperties.private.week)
+                );
+                const hasConfig = existingEvents.some(ev => ev.extendedProperties && ev.extendedProperties.private && ev.extendedProperties.private.appType === 'config');
+
+                log(`Calendar already has ${migratedFirestoreIds.size} migrated jobs, ${existingInvoiceWeeks.size} invoice weeks, config present: ${hasConfig}.`);
+
+                let jobsCreated = 0, jobsSkipped = 0;
+                for (const job of fbJobs) {
+                    if (migratedFirestoreIds.has(job.id)) { jobsSkipped++; continue; }
+                    await apiFetch(`${CAL_BASE}/calendars/${encodeURIComponent(calendarId)}/events`, {
+                        method: 'POST', body: JSON.stringify(jobToEventBody(job))
+                    });
+                    jobsCreated++;
+                    log(`  Job created: ${job.address || job.title || job.id}`);
+                }
+                log(`Jobs: ${jobsCreated} created, ${jobsSkipped} already present (skipped).`);
+
+                let invCreated = 0, invSkipped = 0;
+                for (const [week, inv] of Object.entries(fbInvoices)) {
+                    if (existingInvoiceWeeks.has(week)) { invSkipped++; continue; }
+                    await apiFetch(`${CAL_BASE}/calendars/${encodeURIComponent(calendarId)}/events`, {
+                        method: 'POST', body: JSON.stringify(invoiceEventBody(week, inv.saltash || null, inv.freshbuild || null))
+                    });
+                    invCreated++;
+                    log(`  Invoice record created for week ${week}`);
+                }
+                log(`Invoice records: ${invCreated} created, ${invSkipped} already present (skipped).`);
+
+                if (!hasConfig && fbConfig) {
+                    await apiFetch(`${CAL_BASE}/calendars/${encodeURIComponent(calendarId)}/events`, {
+                        method: 'POST',
+                        body: JSON.stringify(configEventBody(
+                            fbConfig.majorNumber || 25,
+                            fbConfig.freshbuildMinor || 0,
+                            fbConfig.saltashMinor || 0
+                        ))
+                    });
+                    log("Sequence config migrated.");
+                } else if (hasConfig) {
+                    log("Sequence config already present in calendar — left untouched.");
+                }
+
+                log("Migration complete. Open job-manager-calendar.html and click Refresh Data to see everything.");
+            } catch (e) {
+                console.error(e);
+                log(`ERROR: ${e.message}`);
+            } finally {
+                btn.disabled = false;
+            }
+        };
+
+        window.onload = () => { initFirebaseRead(); initGis(); };
+    </script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto p-6 max-w-2xl">
+        <h1 class="text-2xl font-extrabold text-indigo-700 mb-1">Migrate: Firebase → Google Calendar</h1>
+        <p class="text-sm text-gray-500 mb-6">Run this once to copy your existing jobs and invoice history into the new Calendar-backed Job Manager. Safe to re-run — already-migrated items are skipped.</p>
+
+        <div class="bg-white p-4 rounded-xl shadow mb-4">
+            <h2 class="font-bold text-gray-800 mb-1">1. Old Firebase data</h2>
+            <p id="fbStatus" class="text-sm text-gray-600">Connecting...</p>
+        </div>
+
+        <div class="bg-white p-4 rounded-xl shadow mb-4">
+            <h2 class="font-bold text-gray-800 mb-1">2. New Google Calendar</h2>
+            <p id="gcStatus" class="text-sm text-gray-600 mb-2">Not connected</p>
+            <button id="connectGcBtn" onclick="connectGoogleCalendar()" disabled
+                class="bg-blue-600 text-white px-4 py-1.5 rounded-lg font-bold text-sm hover:bg-blue-700 disabled:opacity-50">
+                Connect Google Calendar
+            </button>
+        </div>
+
+        <div class="bg-white p-4 rounded-xl shadow mb-4">
+            <h2 class="font-bold text-gray-800 mb-2">3. Run migration</h2>
+            <button id="migrateBtn" onclick="runMigration()" disabled
+                class="bg-green-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-green-700 disabled:opacity-50 w-full">
+                Migrate Jobs Now
+            </button>
+        </div>
+
+        <div class="bg-black text-green-400 p-4 rounded-xl shadow h-64 overflow-y-auto">
+            <div id="log"></div>
+        </div>
+    </div>
+</body>
+</html>
