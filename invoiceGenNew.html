@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Manager (Google Calendar backend)</title>
+    <title>Job Manager (Google Calendar backend with Invoice Check)</title>
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -34,35 +34,28 @@
         const LABOUR_TAX_RATE = 0.20;
         const LABOUR_AFTER_TAX_MULTIPLIER = 1 - LABOUR_TAX_RATE;
 
-        // ---- GOOGLE AUTH CONFIG -----------------------------------
-        // 1. Create a project in Google Cloud Console, enable the "Google Calendar API".
-        // 2. Configure OAuth consent screen: External + Testing, add yourself as a test user.
-        // 3. Create an OAuth Client ID (Web application), add your hosted site's URL
-        //    (e.g. https://yoursite.com) as an "Authorized JavaScript origin".
-        // 4. Paste that Client ID below.
         const GOOGLE_CLIENT_ID = "653087131866-rso7vedf8f4m4d8uou1ab0tfqvue8toc.apps.googleusercontent.com";
         const GOOGLE_SCOPES    = "https://www.googleapis.com/auth/calendar";
 
-        const CALENDAR_NAME       = "Job Manager"; // dedicated secondary calendar auto-created on first connect
+        const CALENDAR_NAME       = "Job Manager";
         const CALENDAR_ID_STORAGE_KEY = "jobManagerCalendarId";
 
         let tokenClient   = null;
         let accessToken   = null;
         let tokenExpiryMs = 0;
         let calendarId    = null;
-        let configEventId = null; // id of the single hidden "config" event holding sequence counters
+        let configEventId = null;
 
         let allJobs = [];
 
-        // allInvoices: { [weekStartDate]: { eventId, saltash?: string, freshbuild?: string } }
-        // Single source of truth for invoice numbers, loaded once at startup.
+        // allInvoices: { [weekStartDate]: { eventId, saltash, freshbuild, saltashPaid, freshbuildPaid, generated } }
         let allInvoices = {};
 
         let INVOICE_MAJOR_NUMBER = 0;
         let saltashLastMinor     = 0;
         let freshbuildLastMinor  = 0;
 
-        const exportInProgress = new Set(); // prevents double-click on Export Week
+        const exportInProgress = new Set();
 
         const CLIENT_DATA = {
             FRESHBUILD: { name: 'FRESHBUILD LIMITED',          address: 'SHALIMER, CRICKET GROUND RD\nCHISLEHURST\nKENT\nBR7 5HD' },
@@ -80,21 +73,17 @@
 
         function initGis() {
             if (!window.google || !window.google.accounts) {
-                // GIS script hasn't loaded yet — try again shortly.
                 setTimeout(initGis, 200);
                 return;
             }
             tokenClient = google.accounts.oauth2.initTokenClient({
                 client_id: GOOGLE_CLIENT_ID,
                 scope: GOOGLE_SCOPES,
-                callback: () => {} // overridden per-request in ensureToken()
+                callback: () => {}
             });
             attemptSilentConnect();
         }
 
-        /** Tries to reconnect using the browser's existing Google session, with no popup.
-         *  Falls back to showing the manual Connect button only if that's not possible
-         *  (e.g. first-ever visit, or access was revoked). */
         async function attemptSilentConnect() {
             setStatus("Checking existing Google session...");
             try {
@@ -111,7 +100,6 @@
             }
         }
 
-        /** Resolves with a valid access token, requesting one (silently if possible) if needed. */
         function ensureToken({ interactive = false } = {}) {
             if (accessToken && Date.now() < tokenExpiryMs - 60000) {
                 return Promise.resolve(accessToken);
@@ -123,10 +111,6 @@
                     tokenExpiryMs = Date.now() + (resp.expires_in * 1000);
                     resolve(accessToken);
                 };
-                // Silent attempts (interactive: false) force no UI at all — they either succeed
-                // instantly or fail fast. Interactive attempts (user clicked Connect) omit the
-                // prompt override entirely, so Google only shows a screen when one is actually
-                // required (e.g. very first grant) rather than every single time.
                 const params = interactive ? {} : { prompt: '' };
                 tokenClient.requestAccessToken(params);
             });
@@ -170,7 +154,6 @@
         async function getOrCreateCalendarId() {
             const cached = localStorage.getItem(CALENDAR_ID_STORAGE_KEY);
             if (cached) {
-                // Verify it still exists / is reachable; fall through to re-discover on failure.
                 try {
                     await apiFetch(`${CAL_BASE}/calendars/${encodeURIComponent(cached)}`);
                     return cached;
@@ -234,7 +217,10 @@
                     allInvoices[ep.week] = {
                         eventId: ev.id,
                         saltash: ep.saltash || null,
-                        freshbuild: ep.freshbuild || null
+                        freshbuild: ep.freshbuild || null,
+                        saltashPaid: ep.saltashPaid === 'true',
+                        freshbuildPaid: ep.freshbuildPaid === 'true',
+                        generated: ep.generated || null
                     };
                 } else if (ep.appType === 'config') {
                     configEventId = ev.id;
@@ -355,14 +341,36 @@
             };
         }
 
-        function invoiceEventBody(week, saltash, freshbuild) {
-            const priv = { appType: 'invoice', week };
-            if (saltash)    priv.saltash    = saltash;
-            if (freshbuild) priv.freshbuild = freshbuild;
+        function todayStr() {
+            const d = new Date();
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        function invoiceEventBody(week, rec) {
+            const priv = {
+                appType: 'invoice',
+                week,
+                saltash:        rec.saltash    || null,   // null removes the property on PATCH
+                freshbuild:     rec.freshbuild || null,
+                saltashPaid:    String(!!rec.saltashPaid),
+                freshbuildPaid: String(!!rec.freshbuildPaid),
+                generated:      rec.generated  || null
+            };
+            const parts = [];
+            if (rec.saltash)    parts.push(`Saltash ${rec.saltash} ${rec.saltashPaid ? '✅ PAID' : '❌ UNPAID'}`);
+            if (rec.freshbuild) parts.push(`Freshbuild ${rec.freshbuild} ${rec.freshbuildPaid ? '✅ PAID' : '❌ UNPAID'}`);
+
+            const allPaid = parts.length > 0
+                && (!rec.saltash    || rec.saltashPaid)
+                && (!rec.freshbuild || rec.freshbuildPaid);
+            const date = rec.generated || week;
+
             return {
-                summary: `Invoice record — ${week}`,
-                start: { date: week },
-                end:   { date: addDays(week, 1) },
+                summary: `🧾 Invoice — ${parts.join(' | ')}`,
+                description: `Invoices for the week of ${week}`,
+                colorId: allPaid ? '10' : '11',   // green when paid, red when outstanding
+                start: { date },
+                end:   { date: addDays(date, 1) },
                 extendedProperties: { private: priv }
             };
         }
@@ -429,6 +437,10 @@
                 const predSA       = `${INVOICE_MAJOR_NUMBER}.${String(saltashLastMinor + 1).padStart(2, '0')}`;
                 const predFBDigits = String(freshbuildLastMinor + 1).padStart(2, '0');
 
+                const generatedLine = weekInv.generated
+                    ? `<span class="text-[10px] opacity-70">Generated ${sanitize(weekInv.generated)}</span>`
+                    : '';
+
                 const groupDiv = document.createElement('div');
                 groupDiv.className = 'mb-6 shadow-lg rounded-xl overflow-hidden border border-gray-200';
                 groupDiv.innerHTML = `
@@ -447,6 +459,10 @@
                             ${existingSA
                                 ? `<div class="flex flex-col items-center">
                                     <span class="font-mono font-bold">${sanitize(existingSA)}</span>
+                                    ${generatedLine}
+                                    <label class="flex items-center gap-1 text-[11px] mt-1 cursor-pointer">
+                                        <input type="checkbox" ${weekInv.saltashPaid ? 'checked' : ''} onchange="toggleInvoicePaid('${sanitize(week)}', 'saltash', this.checked)"> Paid
+                                    </label>
                                     <button onclick="resetWeekInvoice('${sanitize(week)}', 'saltash')" class="text-[10px] text-red-300 underline mt-1">Reset</button>
                                    </div>`
                                 : `<input type="text" placeholder="${sanitize(predSA)}" class="text-black text-xs p-1 rounded w-full text-center" id="manualSA-${sanitize(week)}">`
@@ -457,6 +473,10 @@
                             ${existingFB
                                 ? `<div class="flex flex-col items-center">
                                     <span class="font-mono font-bold">${sanitize(existingFB)}</span>
+                                    ${generatedLine}
+                                    <label class="flex items-center gap-1 text-[11px] mt-1 cursor-pointer">
+                                        <input type="checkbox" ${weekInv.freshbuildPaid ? 'checked' : ''} onchange="toggleInvoicePaid('${sanitize(week)}', 'freshbuild', this.checked)"> Paid
+                                    </label>
                                     <button onclick="resetWeekInvoice('${sanitize(week)}', 'freshbuild')" class="text-[10px] text-red-300 underline mt-1">Reset</button>
                                    </div>`
                                 : `<div class="flex items-center bg-white rounded px-1">
@@ -509,7 +529,7 @@
         };
 
         // ==========================================================
-        // SECTION 6: CRUD (now against Google Calendar events)
+        // SECTION 6: CRUD (against Google Calendar events)
         // ==========================================================
         window.addJob = async function (e) {
             e.preventDefault();
@@ -600,48 +620,65 @@
         };
 
         // ==========================================================
-        // SECTION 7: INVOICE STORAGE HELPERS (hidden calendar events)
+        // SECTION 7: INVOICE STORAGE HELPERS (calendar events)
         // ==========================================================
 
-        /** Persist invoice numbers for a week — 1 event created/updated */
-        async function saveWeekInvoice(week, saltashNum, freshbuildNum) {
+        async function writeInvoiceRecord(week, rec) {
             const existing = allInvoices[week];
-            const combinedSaltash    = saltashNum    || (existing && existing.saltash)    || null;
-            const combinedFreshbuild = freshbuildNum || (existing && existing.freshbuild) || null;
-            const body = invoiceEventBody(week, combinedSaltash, combinedFreshbuild);
-
-            let result;
-            if (existing && existing.eventId) {
-                result = await apiFetch(`${CAL_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${existing.eventId}`, {
-                    method: 'PATCH', body: JSON.stringify(body)
-                });
-            } else {
-                result = await apiFetch(`${CAL_BASE}/calendars/${encodeURIComponent(calendarId)}/events`, {
-                    method: 'POST', body: JSON.stringify(body)
-                });
-            }
-            allInvoices[week] = { eventId: result.id, saltash: combinedSaltash, freshbuild: combinedFreshbuild };
+            const body = invoiceEventBody(week, rec);
+            const base = `${CAL_BASE}/calendars/${encodeURIComponent(calendarId)}/events`;
+            const result = (existing && existing.eventId)
+                ? await apiFetch(`${base}/${existing.eventId}`, { method: 'PATCH', body: JSON.stringify(body) })
+                : await apiFetch(base, { method: 'POST', body: JSON.stringify(body) });
+            allInvoices[week] = {
+                saltash: rec.saltash || null,
+                freshbuild: rec.freshbuild || null,
+                saltashPaid: !!rec.saltashPaid,
+                freshbuildPaid: !!rec.freshbuildPaid,
+                generated: rec.generated || null,
+                eventId: result.id
+            };
         }
 
-        /** Remove one invoice type for a week — 1 update, or 1 delete if the week doc becomes empty */
+        /** generatedDate: pass todayStr() when an invoice is actually generated */
+        async function saveWeekInvoice(week, saltashNum, freshbuildNum, generatedDate) {
+            const ex = allInvoices[week] || {};
+            await writeInvoiceRecord(week, {
+                saltash:        saltashNum    || ex.saltash    || null,
+                freshbuild:     freshbuildNum || ex.freshbuild || null,
+                saltashPaid:    !!ex.saltashPaid,
+                freshbuildPaid: !!ex.freshbuildPaid,
+                generated:      generatedDate || ex.generated || null
+            });
+        }
+
         async function clearWeekInvoice(week, type) {
             const existing = allInvoices[week];
             if (!existing || !existing.eventId) return;
 
-            const remainingSaltash    = type === 'saltash'    ? null : existing.saltash;
-            const remainingFreshbuild = type === 'freshbuild' ? null : existing.freshbuild;
+            const rec = { ...existing };
+            rec[type] = null;
+            rec[type + 'Paid'] = false;
 
-            if (!remainingSaltash && !remainingFreshbuild) {
+            if (!rec.saltash && !rec.freshbuild) {
                 await apiFetch(`${CAL_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${existing.eventId}`, { method: 'DELETE' });
                 delete allInvoices[week];
             } else {
-                const body   = invoiceEventBody(week, remainingSaltash, remainingFreshbuild);
-                const result = await apiFetch(`${CAL_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${existing.eventId}`, {
-                    method: 'PATCH', body: JSON.stringify(body)
-                });
-                allInvoices[week] = { eventId: result.id, saltash: remainingSaltash, freshbuild: remainingFreshbuild };
+                await writeInvoiceRecord(week, rec);
             }
         }
+
+        window.toggleInvoicePaid = async function (week, type, checked) {
+            const ex = allInvoices[week];
+            if (!ex) return;
+            try {
+                await writeInvoiceRecord(week, { ...ex, [type + 'Paid']: checked });
+            } catch (e) {
+                console.error("Paid toggle error:", e);
+                alert("Couldn't update paid status. Check console.");
+            }
+            renderJobs();
+        };
 
         async function saveInvoiceNumbers(major, fbMinor, saMinor) {
             try {
@@ -668,7 +705,7 @@
         }
 
         // ==========================================================
-        // SECTION 8: EXPORT (unchanged — docx/xlsx logic is backend-agnostic)
+        // SECTION 8: EXPORT
         // ==========================================================
         window.exportWeekData = async function (week) {
             if (exportInProgress.has(week)) {
@@ -705,7 +742,7 @@
                     }
                 }
 
-                if (newSA || newFB) await saveWeekInvoice(week, newSA, newFB);
+                if (newSA || newFB) await saveWeekInvoice(week, newSA, newFB, todayStr());
 
                 if (fbM !== freshbuildLastMinor || saM !== saltashLastMinor) {
                     await saveInvoiceNumbers(INVOICE_MAJOR_NUMBER, fbM, saM);
@@ -843,7 +880,7 @@
 <body class="bg-gray-100 min-h-screen">
     <div class="container mx-auto p-4 sm:p-6 lg:p-8">
         <h1 class="text-3xl font-extrabold text-indigo-700 mb-2">Job Manager & Invoice Generator</h1>
-        <p class="text-sm text-gray-400 mb-1">Version 2.0 — Google Calendar backend</p>
+        <p class="text-sm text-gray-400 mb-1">Version 2.1 — Google Calendar backend</p>
         <div class="flex items-center gap-3 mb-6">
             <p id="authStatus" class="text-sm text-gray-600">Status: Initializing...</p>
             <button id="connectBtn" onclick="connectGoogleCalendar()" style="display:none"
