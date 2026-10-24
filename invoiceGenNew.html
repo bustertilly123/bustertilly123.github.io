@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Job Manager (Google Calendar backend with Invoice Check)</title>
+    <title>Job Manager (Google Calendar backend)</title>
 
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -626,6 +626,11 @@
         async function writeInvoiceRecord(week, rec) {
             const existing = allInvoices[week];
             const body = invoiceEventBody(week, rec);
+            if (!(existing && existing.eventId)) {
+                // nulls only mean "remove" on PATCH; on create the API can reject them
+                const priv = body.extendedProperties.private;
+                Object.keys(priv).forEach(k => { if (priv[k] === null) delete priv[k]; });
+            }
             const base = `${CAL_BASE}/calendars/${encodeURIComponent(calendarId)}/events`;
             const result = (existing && existing.eventId)
                 ? await apiFetch(`${base}/${existing.eventId}`, { method: 'PATCH', body: JSON.stringify(body) })
@@ -749,6 +754,9 @@
                 }
 
                 renderJobs();
+            } catch (e) {
+                console.error("Export error:", e);
+                alert("Export problem:\n" + e.message);
             } finally {
                 exportInProgress.delete(week);
             }
@@ -829,7 +837,13 @@
                 return;
             }
 
-            await saveWeekInvoice(week, finalSA, finalFB);
+            try {
+                await saveWeekInvoice(week, finalSA, finalFB);
+            } catch (e) {
+                console.error("Save History error:", e);
+                alert("Couldn't save to Google Calendar:\n" + e.message);
+                return;
+            }
             renderJobs();
         };
 
